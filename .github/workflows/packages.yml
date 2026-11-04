@@ -44,6 +44,9 @@ jobs:
       - name: Tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq curl gnupg xz-utils zstd git
 
+      - name: A folder for Slackware's packages (the cache can only restore into one it may write)
+        run: sudo mkdir -p /mnt/slackware-cache && sudo chown -R "$USER" /mnt /mnt/slackware-cache
+
       - name: Slackware's packages, kept between runs
         uses: actions/cache/restore@v4
         with:
@@ -164,6 +167,9 @@ jobs:
 
       - name: Tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq curl gnupg xz-utils zstd git rsync
+
+      - name: A folder for Slackware's packages (the cache can only restore into one it may write)
+        run: sudo mkdir -p /mnt/slackware-cache && sudo chown -R "$USER" /mnt /mnt/slackware-cache
 
       - name: Slackware's packages (kept by the packages job)
         uses: actions/cache/restore@v4
