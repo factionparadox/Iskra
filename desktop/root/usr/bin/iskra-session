@@ -20,7 +20,7 @@ feh --no-fehbg --bg-fill /usr/share/iskra/iskra-wallpaper.png   # Pasha howling 
 xset s 600 600 dpms 600 900 1200                   # blank after 10 minutes, screen off later
 xss-lock --transfer-sleep-lock -- slock &          # lock on sleep, lid and Super+x
 dunst &                                            # notifications
-udiskie --automount --notify &                     # USB sticks and drives
+command -v udiskie >/dev/null && udiskie --automount --notify &                     # USB sticks and drives
 xbanish &                                          # hide the pointer while typing
 iskra-battery &                                  # low-battery warnings, hibernate when empty
 clipmenud &                                        # clipboard history (Super+v)

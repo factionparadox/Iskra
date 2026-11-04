@@ -35,7 +35,7 @@ font-ipaex              iskra:font-ipaex
 zig                     iskra:zig          # ly is built with it; its own build (from source: hours)
 ly                      iskra:ly           # Arch's way, from git at Arch's commits
 networkmanager-dmenu    arch:networkmanager-dmenu
-udiskie                 arch:udiskie
+# later (doesn't build yet): udiskie                 arch:udiskie
 pulsemixer              ponce:audio/pulsemixer
 # later (doesn't build yet): bluetuith               aur:bluetuith
 # later (doesn't build yet): chrony                  ponce:network/chrony
