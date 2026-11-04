@@ -2,7 +2,7 @@
 title-text: ""
 desktop-image: "background.png"
 desktop-image-scale-method: "crop"
-desktop-color: "#0c0c10"
+desktop-color: "#0a0a1c"
 terminal-font: "DejaVu Sans Regular 32"
 
 + boot_menu {
@@ -12,7 +12,7 @@ terminal-font: "DejaVu Sans Regular 32"
 	height = 40%
 	item_font = "DejaVu Sans Regular 44"
 	selected_item_font = "DejaVu Sans Bold 44"
-	item_color = "#9696a0"
+	item_color = "#b4bccc"
 	selected_item_color = "#ececf0"
 	item_height = 76
 	item_padding = 28
@@ -30,6 +30,6 @@ terminal-font: "DejaVu Sans Regular 32"
 	align = "left"
 	id = "__timeout__"
 	text = "Starting in %d s  ·  ↑ ↓ choose  ·  Enter starts  ·  e edits"
-	color = "#9696a0"
+	color = "#b4bccc"
 	font = "DejaVu Sans Regular 32"
 }

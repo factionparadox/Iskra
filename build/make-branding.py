@@ -5,14 +5,15 @@
   branding/pasha-512/-256/-128.png                the same, kept under Pasha's name
   desktop/root/usr/share/iskra/iskra-logo.png     the logo, for the system
   desktop/root/usr/share/pixmaps/iskra.png        256 px icon
-  desktop/root/usr/share/iskra/iskra-wallpaper.png Pasha and the name on the background
+  desktop/root/usr/share/iskra/iskra-wallpaper.png Pasha howling at the aurora (build/sky.py)
   desktop/root/usr/share/iskra/fastfetch/pasha.txt fastfetch's logo, made from the neofetch logo
                                                   branding/pasha-fastfetch-original.txt
-Needs Pillow:  python3 build/make-branding.py
+Needs Pillow and NumPy:  python3 build/make-branding.py
 """
 import json, re
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+import sys; sys.path.insert(0, str(Path(__file__).parent)); from sky import sky
 
 ROOT = Path(__file__).resolve().parents[1]
 B, SHARE = ROOT / 'branding', ROOT / 'desktop/root/usr/share'
@@ -69,13 +70,12 @@ def main():
     big.resize((512, 512), Image.LANCZOS).save(SHARE / 'iskra/iskra-logo.png', optimize=True)
     big.resize((256, 256), Image.LANCZOS).save(SHARE / 'pixmaps/iskra.png', optimize=True)
 
-    wall = Image.new('RGBA', (2880, 1920), BACKGROUND + (255,))
-    p = logo(900)
-    wall.paste(p, ((wall.width - 900) // 2, 260), p)
-    d = ImageDraw.Draw(wall)
-    font = ImageFont.truetype(FONT, 120)
-    word = ' '.join('ИСКРА')                                    # spaced out, poster style
-    d.text(((wall.width - d.textlength(word, font=font)) / 2, 1240), word, font=font, fill=RED)
+    wall = sky(2880, 1920).convert('RGBA')                      # Pasha howling at the aurora
+    p = logo(760)
+    shadow = Image.new('RGBA', wall.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).ellipse((800 - 260, 1795 - 30, 800 + 260, 1795 + 30), fill=(0, 0, 0, 140))
+    wall.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(16)))
+    wall.alpha_composite(p, (420, 1800 - 760 + 30))
     wall.convert('RGB').save(SHARE / 'iskra/iskra-wallpaper.png', optimize=True)
 
     text, colours = fastfetch()

@@ -4,14 +4,15 @@
                                               pieces and its fonts (.pf2, with Cyrillic)
 The installer copies it to /boot/grub/themes/iskra.
 
-The screen: Паша the wolf pup (branding/pasha.png) on the left, howling, in a red glow against a starry night,
-ИСКРА and the menu on the right. Drawn for the 13 Pro's 3:2 panel
+The screen: Паша the wolf pup (branding/pasha.png) on a meadow, howling at a Siberian aurora
+(build/sky.py), ИСКРА and the menu on a dark glass panel on the right. Drawn for the 13 Pro's 3:2 panel
 (2880 x 1920); GRUB crops it to other shapes.
-Needs Pillow and grub-mkfont (grub's tools):  python3 build/make-grub-theme.py
+Needs Pillow, NumPy and grub-mkfont (grub's tools):  python3 build/make-grub-theme.py
 """
-import math, random, subprocess
+import subprocess
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from sky import sky
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'desktop/root/usr/share/iskra/grub-theme'
@@ -22,57 +23,40 @@ SANS = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 BOLD = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 
 
-def star(d, cx, cy, r, fill, points=5, inner=0.42):
-    pts = []
-    for i in range(points * 2):
-        a = -math.pi / 2 + i * math.pi / points
-        rr = r if i % 2 == 0 else r * inner
-        pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
-    d.polygon(pts, fill=fill)
-
-
 def background():
-    img = Image.new('RGB', (W, H), BG)
-    # a deep red glow behind Pasha, fading to the background
-    glow = Image.new('L', (W, H), 0)
-    gd = ImageDraw.Draw(glow)
-    cx, cy = 860, 1010
-    for r in range(1100, 0, -20):
-        gd.ellipse((cx - r, cy - r * 0.9, cx + r, cy + r * 0.9), fill=int(255 * (1 - r / 1100) ** 1.6))
-    img = Image.composite(Image.new('RGB', (W, H), DARKRED), img, glow.filter(ImageFilter.GaussianBlur(60)))
-    # the night sky: a scatter of faint stars for him to howl at
+    img = sky(W, H).convert('RGBA')
+    # Pasha on the meadow, howling up at the aurora
+    p = Image.open(ROOT / 'branding/pasha.png').convert('RGBA')
+    p = p.crop(p.getchannel('A').getbbox())
+    ph = 980
+    p = p.resize((int(p.width * ph / p.height), ph), Image.LANCZOS)
+    feet = 1760
+    shadow = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).ellipse((760 - 330, feet - 40, 760 + 330, feet + 40), fill=(0, 0, 0, 140))
+    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(18)))
+    img.alpha_composite(p, (760 - p.width // 2, feet - ph))
+    # a dark glass panel for the name and the menu, so they read against the sky
+    panel = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(panel).rounded_rectangle((1500, 470, 2790, 1790), radius=48, fill=(8, 8, 20, 150))
+    img.alpha_composite(panel.filter(ImageFilter.GaussianBlur(2)))
     d = ImageDraw.Draw(img)
-    rnd = random.Random(1999)
-    for _ in range(420):
-        x, y = rnd.randrange(W), rnd.randrange(H)
-        v = rnd.randrange(40, 95)
-        s = rnd.choice((1, 1, 1, 2, 2, 3))
-        d.ellipse((x, y, x + s, y + s), fill=(v, v, v + 6))
-    # Pasha, the wolf pup, howling up at the stars (his picture has a see-through background)
-    pasha = Image.open(ROOT / 'branding/pasha.png').convert('RGBA')
-    pasha = pasha.crop(pasha.getchannel('A').getbbox())
-    scale = 1150 / pasha.height
-    pasha = pasha.resize((int(pasha.width * scale), 1150), Image.LANCZOS)
-    img.paste(pasha, (cx - pasha.width // 2, cy - pasha.height // 2 + 40), pasha)
-    # ИСКРА, the name, and a red rule under them
-    d = ImageDraw.Draw(img)
-    title = ImageFont.truetype(BOLD, 230)
-    x0, y0 = 1560, 250
+    title = ImageFont.truetype(BOLD, 190)
+    x0, y0 = 1580, 520
     x = x0
     for ch in 'ИСКРА':
-        d.text((x, y0), ch, font=title, fill=RED)
-        x += d.textlength(ch, font=title) + 34
-    sub = ImageFont.truetype(SANS, 64)
-    d.text((x0 + 6, y0 + 290), 'Iskra  ·  built on Slackware', font=sub, fill=GREY)
-    d.rectangle((x0 + 6, y0 + 400, x0 + 1180, y0 + 406), fill=RED)
-    return img
+        d.text((x, y0), ch, font=title, fill=WHITE)
+        x += d.textlength(ch, font=title) + 30
+    sub = ImageFont.truetype(SANS, 56)
+    d.text((x0 + 6, y0 + 230), 'Iskra  ·  built on Slackware', font=sub, fill=(190, 200, 215))
+    d.rectangle((x0 + 6, y0 + 320, x0 + 1110, y0 + 325), fill=RED)
+    return img.convert('RGB')
 
 
 def highlight():
-    # the selected menu line: a translucent red band with a solid red bar at its left edge
-    Image.new('RGBA', (8, 8), (213, 43, 30, 70)).save(OUT / 'select_c.png')
+    # the selected menu line: a translucent white band with a solid red bar at its left edge
+    Image.new('RGBA', (8, 8), (255, 255, 255, 40)).save(OUT / 'select_c.png')
     Image.new('RGBA', (12, 8), (213, 43, 30, 255)).save(OUT / 'select_w.png')
-    Image.new('RGBA', (8, 8), (213, 43, 30, 70)).save(OUT / 'select_e.png')
+    Image.new('RGBA', (8, 8), (255, 255, 255, 40)).save(OUT / 'select_e.png')
 
 
 def fonts():
@@ -86,7 +70,7 @@ THEME = '''# Iskra's GRUB theme (made by build/make-grub-theme.py)
 title-text: ""
 desktop-image: "background.png"
 desktop-image-scale-method: "crop"
-desktop-color: "#0c0c10"
+desktop-color: "#0a0a1c"
 terminal-font: "DejaVu Sans Regular 32"
 
 + boot_menu {
@@ -96,7 +80,7 @@ terminal-font: "DejaVu Sans Regular 32"
 	height = 40%
 	item_font = "DejaVu Sans Regular 44"
 	selected_item_font = "DejaVu Sans Bold 44"
-	item_color = "#9696a0"
+	item_color = "#b4bccc"
 	selected_item_color = "#ececf0"
 	item_height = 76
 	item_padding = 28
@@ -114,7 +98,7 @@ terminal-font: "DejaVu Sans Regular 32"
 	align = "left"
 	id = "__timeout__"
 	text = "Starting in %d s  ·  ↑ ↓ choose  ·  Enter starts  ·  e edits"
-	color = "#9696a0"
+	color = "#b4bccc"
 	font = "DejaVu Sans Regular 32"
 }
 '''

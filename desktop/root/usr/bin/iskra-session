@@ -16,7 +16,7 @@ pipewire-pulse &
 xrdb -merge /etc/iskra/Xresources                # fonts, DPI, terminal colours
 [ -f "$HOME/.Xresources" ] && xrdb -merge "$HOME/.Xresources"
 xsetroot -cursor_name left_ptr
-feh --no-fehbg --bg-fill /usr/share/iskra/iskra-wallpaper.png   # Pasha and ИСКРА
+feh --no-fehbg --bg-fill /usr/share/iskra/iskra-wallpaper.png   # Pasha howling at the aurora
 xset s 600 600 dpms 600 900 1200                   # blank after 10 minutes, screen off later
 xss-lock --transfer-sleep-lock -- slock &          # lock on sleep, lid and Super+x
 dunst &                                            # notifications
