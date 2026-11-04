@@ -50,7 +50,7 @@ freetube                ponce:multimedia/freetube
 # later (doesn't build yet): webcord                 aur:webcord-bin
 # later (doesn't build yet): proton-vpn-gtk-app      arch:proton-vpn-gtk-app
 yt-dlp                  ponce:network/yt-dlp
-ani-cli                 ponce:network/ani-cli
+ani-cli                 iskra:ani-cli
 
 # Russian: dictionaries, the tutor's engine and voices
 hunspell-en             ponce:office/hunspell-en
