@@ -1,95 +1,92 @@
 #!/usr/bin/env python3
-"""Make Iskra's logo files (run after changing the design below):
-  branding/iskra-logo.png and -512/-256/-128/-64.png   the mark, transparent
-  desktop/root/usr/share/iskra/fastfetch-logo.txt      fastfetch's logo: true-colour half
-                                                         blocks, 44 x 22
-  desktop/root/usr/share/iskra/iskra-wallpaper.png   the mark and the name on the background
-  desktop/root/usr/share/pixmaps/iskra.png             256 px icon
-The mark: Искра is the cross, and CRUX is the Southern Cross: its four bright stars (Acrux at the
-foot, Gacrux at the head, Mimosa and Delta Crucis on the arms) and the small Epsilon, as red
-five-pointed stars, the brightest the largest. Drawn here, from shapes:
-no source image. Needs Pillow:  python3 build/make-branding.py
+"""Make Iskra's logo files from Pasha, the howling wolf pup (run after changing the art):
+  branding/pasha.png                              the source picture (transparent background)
+  branding/iskra-logo.png and -512/-256/-128/-64  the logo, Pasha on a transparent square
+  branding/pasha-512/-256/-128.png                the same, kept under Pasha's name
+  desktop/root/usr/share/iskra/iskra-logo.png     the logo, for the system
+  desktop/root/usr/share/pixmaps/iskra.png        256 px icon
+  desktop/root/usr/share/iskra/iskra-wallpaper.png Pasha and the name on the background
+  desktop/root/usr/share/iskra/fastfetch/pasha.txt fastfetch's logo, made from the neofetch logo
+                                                  branding/pasha-fastfetch-original.txt
+Needs Pillow:  python3 build/make-branding.py
 """
+import json, re
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 B, SHARE = ROOT / 'branding', ROOT / 'desktop/root/usr/share'
 BACKGROUND = (12, 12, 16)          # '#0c0c10', as in iskra-session and the bar
-RED, WHITE, BLUE, GREY = (213, 43, 30), (242, 242, 242), (0, 57, 166), (200, 200, 200)
-COLS = 44                          # fastfetch logo width; height is half (cells are 1:2)
+RED, GREY = (213, 43, 30), (150, 150, 158)
 FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 
 
-def star(d, cx, cy, r, fill):
-    """A five-pointed star, point up, centred on (cx, cy), outer radius r."""
-    import math
-    pts = []
-    for i in range(10):
-        a = math.pi / 2 + i * math.pi / 5
-        rr = r if i % 2 == 0 else r * 0.40
-        pts.append((cx + rr * math.cos(a), cy - rr * math.sin(a)))
-    d.polygon(pts, fill=fill)
-
-
-def mark(size=1200):
-    """The Southern Cross, on a transparent square."""
-    s = size / 1200
-    im = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    for x, y, r in ((600, 1010, 175),    # Acrux, the foot
-                    (600, 190, 150),     # Gacrux, the head
-                    (250, 520, 145),     # Mimosa, the left arm
-                    (930, 440, 115),     # Delta Crucis, the right arm
-                    (760, 720, 65)):     # Epsilon Crucis
-        star(d, x * s, y * s, r * s, RED)
-    box = im.split()[3].point(lambda v: 255 if v > 128 else 0).getbbox()
-    crop = im.crop(box)
-    side = max(crop.size); pad = int(side * 0.06)
-    sq = Image.new('RGBA', (side + 2 * pad,) * 2, (0, 0, 0, 0))
-    sq.paste(crop, ((sq.width - crop.width) // 2, (sq.height - crop.height) // 2), crop)
+def logo(size):
+    """Pasha centred on a transparent square."""
+    p = Image.open(B / 'pasha.png').convert('RGBA')
+    p = p.crop(p.getchannel('A').getbbox())
+    sq = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    t = p.copy(); t.thumbnail((int(size * 0.94),) * 2, Image.LANCZOS)
+    sq.paste(t, ((size - t.width) // 2, (size - t.height) // 2), t)
     return sq
 
 
-def fastfetch_logo(sq):
-    rows = COLS // 2
-    px = sq.resize((COLS, rows * 2), Image.LANCZOS).load()
-    solid = lambda p: p[3] >= 110
-    lines = []
-    for r in range(rows):
-        line = ''
-        for c in range(COLS):
-            top, bot = px[c, 2 * r], px[c, 2 * r + 1]
-            if solid(top) and solid(bot):
-                line += f'\x1b[38;2;{top[0]};{top[1]};{top[2]}m\x1b[48;2;{bot[0]};{bot[1]};{bot[2]}m▀'
-            elif solid(top):
-                line += f'\x1b[49m\x1b[38;2;{top[0]};{top[1]};{top[2]}m▀'
-            elif solid(bot):
-                line += f'\x1b[49m\x1b[38;2;{bot[0]};{bot[1]};{bot[2]}m▄'
-            else:
-                line += '\x1b[0m '
-        lines.append(line + '\x1b[0m')
-    return '\n'.join(lines) + '\n'
+def fastfetch():
+    """neofetch's logo format (a 'colors' line, ${c1}..${c6}) to fastfetch's ($1..$6).
+    Returns fastfetch's logo text and the colours, for the config's logo.color."""
+    src = (B / 'pasha-fastfetch-original.txt').read_text().split('\n')
+    colours = src[0].split()[1:]
+    lines = src[1:]
+    while lines and not lines[0].strip(): lines.pop(0)
+    while lines and not lines[-1].strip(): lines.pop()
+    code = re.compile(r'\$\{c(\d)\}')
+    width = lambda l: len(code.sub('', l))
+    indent = min(width(l) - len(code.sub('', l).lstrip()) for l in lines if code.sub('', l).strip())
+    out = []
+    for l in lines:
+        l = l.replace('\\\\', '\\')                           # neofetch's \\ is one backslash
+        n, i, pre = indent, 0, ''
+        while n and i < len(l):                                # drop the shared left margin
+            m = code.match(l, i)
+            if m: pre += m.group(); i = m.end(); continue
+            i += 1; n -= 1
+        l = (pre + l[i:]).rstrip()
+        parts = code.split(l)                                  # text, colour, text, colour, ...
+        out.append(''.join(t.replace('$', '$$') if k % 2 == 0 else '$' + t   # fastfetch: $$ is a $
+                           for k, t in enumerate(parts)))
+    return '\n'.join(out) + '\n', colours
 
 
 def main():
-    sq = mark(2400).resize((1200, 1200), Image.LANCZOS)
-    sq.save(B / 'iskra-logo.png', optimize=True)
+    big = logo(1200)
+    big.save(B / 'iskra-logo.png', optimize=True)
     for n in (512, 256, 128, 64):
-        sq.resize((n, n), Image.LANCZOS).save(B / f'iskra-{n}.png', optimize=True)
-    (SHARE / 'iskra').mkdir(parents=True, exist_ok=True)
-    (SHARE / 'pixmaps').mkdir(parents=True, exist_ok=True)
-    (SHARE / 'iskra/fastfetch-logo.txt').write_text(fastfetch_logo(sq), encoding='utf-8')
+        big.resize((n, n), Image.LANCZOS).save(B / f'iskra-{n}.png', optimize=True)
+    for n in (512, 256, 128):
+        big.resize((n, n), Image.LANCZOS).save(B / f'pasha-{n}.png', optimize=True)
+    for d in ('iskra/fastfetch', 'pixmaps'):
+        (SHARE / d).mkdir(parents=True, exist_ok=True)
+    big.resize((512, 512), Image.LANCZOS).save(SHARE / 'iskra/iskra-logo.png', optimize=True)
+    big.resize((256, 256), Image.LANCZOS).save(SHARE / 'pixmaps/iskra.png', optimize=True)
+
     wall = Image.new('RGBA', (2880, 1920), BACKGROUND + (255,))
-    logo = sq.resize((760, 760), Image.LANCZOS)
-    wall.paste(logo, ((wall.width - 760) // 2, 420), logo)
+    p = logo(900)
+    wall.paste(p, ((wall.width - 900) // 2, 260), p)
     d = ImageDraw.Draw(wall)
     font = ImageFont.truetype(FONT, 120)
     word = ' '.join('ИСКРА')                                    # spaced out, poster style
-    w = d.textlength(word, font=font)
-    d.text(((wall.width - w) / 2, 1260), word, font=font, fill=GREY)
+    d.text(((wall.width - d.textlength(word, font=font)) / 2, 1240), word, font=font, fill=RED)
     wall.convert('RGB').save(SHARE / 'iskra/iskra-wallpaper.png', optimize=True)
-    sq.resize((256, 256), Image.LANCZOS).save(SHARE / 'pixmaps/iskra.png', optimize=True)
+
+    text, colours = fastfetch()
+    (SHARE / 'iskra/fastfetch/pasha.txt').write_text(text, encoding='utf-8')
+    cfg = ROOT / 'desktop/root/etc/xdg/fastfetch/config.jsonc'
+    c = cfg.read_text()
+    c = re.sub(r'"logo": \{.*?\n  \}', '"logo": {\n    "type": "file",\n'
+               '    "source": "/usr/share/iskra/fastfetch/pasha.txt",\n'
+               f'    "color": {json.dumps({str(i + 1): v for i, v in enumerate(colours)})},\n'
+               '    "padding": { "top": 1, "right": 3 }\n  }', c, flags=re.S)
+    cfg.write_text(c)
 
 
 if __name__ == '__main__':
