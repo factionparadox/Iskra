@@ -1,0 +1,124 @@
+#!/bin/sh
+# Iskra's menu (Ctrl+Super+Space): dmenu lists, one per topic, like the classic right-click menu.
+#   iskra-menu [main|russian|learn|power|system]
+# Each entry is "label<TAB>command"; edit /usr/bin/iskra-menu's lists, or copy it to
+# ~/.local/bin/iskra-menu and change your copy.
+dm() { dmenu -i -l 14 -p "$1" -fn 'DejaVu Sans Mono-12' -nb '#16161c' -nf '#d8d8d8' -sb '#c8323c' -sf '#ffffff'; }
+installed() {  # the entries whose programs are installed (optional ones may not be)
+  while IFS= read -r line; do
+    cmd=${line#*	}
+    for prog in "${cmd%% *}" framework_tool bluetuith; do
+      case $prog in framework_tool|bluetuith) case $cmd in *"$prog"*) ;; *) continue ;; esac ;; esac
+      case $prog in iskra-menu|*\)*) continue ;; esac
+      command -v "$prog" >/dev/null 2>&1 || continue 2
+    done
+    printf '%s\n' "$line"
+  done
+}
+pick() {  # pick PROMPT, entries on stdin
+  entries=$(installed)
+  label=$(printf '%s\n' "$entries" | cut -f1 | dm "$1") || exit 0
+  printf '%s\n' "$entries" | awk -F'\t' -v l="$label" '$1 == l { print $2; exit }'
+}
+run() { [ -n "$1" ] && setsid -f sh -c "$1" >/dev/null 2>&1; }
+
+case "${1:-main}" in
+main)
+  run "$(pick 'Искра' <<'M'
+Terminal	iskra-term
+Files (Midnight Commander)	iskra-term Files mc
+Write (acme)	iskra-acme
+Web	firefox
+Office (LibreOffice)	libreoffice
+Discord	iskra-open discord
+YouTube	iskra-open youtube
+Games (Steam)	steam
+Russian ›	iskra-menu russian
+Learn the system ›	iskra-menu learn
+Wi-Fi	networkmanager_dmenu
+Wi-Fi (full screen)	iskra-term Wi-Fi nmtui
+Proton VPN	protonvpn-app
+VPN on/off (WireGuard files)	iskra-vpn
+Bluetooth	iskra-term Bluetooth bluetuith
+Bluetooth (bluetoothctl)	iskra-term Bluetooth bluetoothctl
+Sound	iskra-term Sound pulsemixer
+System ›	iskra-menu system
+Screenshot	iskra-screenshot
+Keys	iskra-keys
+Power ›	iskra-menu power
+M
+)" ;;
+russian)
+  run "$(pick 'Русский' <<'M'
+Where to start (the route to B2)	iskra-term Russian iskra-russian --pause path
+Words (10 minutes, spaced repetition)	iskra-term Слова iskra-russian --pause words
+Tutor (AI, on this laptop)	iskra-term Репетитор iskra-russian --pause tutor
+Listen (audiobooks)	iskra-term Listen iskra-russian --pause listen --pick
+Course library (FSI, DLI, Peace Corps)	iskra-russian library --open
+Textbook: Между нами	iskra-russian read mezhdunami
+Dictionary (Wiktionary)	iskra-russian read wiktionary
+Download material…	iskra-term Downloads sh -c 'sudo iskra-content; read -r -p "Enter to close " _'
+M
+)" ;;
+learn)
+  run "$(pick 'Learn' <<'M'
+Lessons	iskra-term Learn iskra-learn browse
+Wiki: CRUX explained (ports, prt-get, rc scripts ...)	iskra-term Wiki iskra-learn wiki
+Wiki page…	iskra-menu wikipage
+Search the lessons and the wiki…	iskra-menu search
+System map (what is running)	iskra-term 'System map' sh -c 'iskra-learn doctor; read -r -p "Enter to close " _'
+Explain a command…	iskra-menu explain
+CRUX handbook (offline)	iskra-handbook
+CRUX handbook and the wiki, side by side (mc)	iskra-handbook mc
+Manual page…	iskra-menu manual
+Where things come from	iskra-term Sources sh -c 'iskra-learn sources | less'
+M
+)" ;;
+explain)
+  cmd=$(printf '' | dm 'Explain (nothing is run):') || exit 0
+  [ -n "$cmd" ] && setsid -f iskra-term Explain sh -c 'iskra-learn explain "$1" | less' _ "$cmd" ;;
+clickforce)
+  force=$(printf 'low\nmedium\nhigh\n' | dm 'Touchpad click force (fewer false clicks: high):') || exit 0
+  [ -n "$force" ] && setsid -f iskra-term Touchpad sh -c 'sudo framework_tool --click-force "$1"; read -r -p "Enter to close " _' _ "$force" ;;
+wikipage)
+  page=$(ls /usr/share/iskra/learn/wiki | sed 's/\.md$//' | dm 'Wiki page:') || exit 0
+  [ -n "$page" ] && setsid -f iskra-term "Wiki: $page" iskra-learn wiki "$page" ;;
+search)
+  words=$(printf '' | dm 'Search the lessons and the wiki:') || exit 0
+  [ -n "$words" ] && setsid -f iskra-term "Search: $words" sh -c 'iskra-learn search $1 | less' _ "$words" ;;
+manual)
+  page=$(printf '' | dm 'man') || exit 0
+  [ -n "$page" ] && setsid -f iskra-term "man $page" man "$page" ;;
+system)
+  run "$(pick 'System' <<'M'
+Update everything (sync the ports, then rebuild what changed)	iskra-term Update sh -c 'iskra-update; read -r -p "Enter to close " _'
+What would update (prt-get diff)	iskra-term Updates sh -c 'prt-get diff | less'
+Services (/etc/rc.d)	iskra-term Services sh -c 'for s in /etc/rc.d/*; do printf "%-18s " "${s##*/}"; sudo "$s" status 2>&1 | head -n 1; done | less'
+The log (/var/log/messages)	iskra-term Log sudo less +G /var/log/messages
+Processes (htop)	iskra-term htop htop
+Battery report (powertop)	iskra-term powertop sudo powertop
+Sleep check (suspends for 1 minute)	iskra-term 'Sleep check' sh -c 'iskra-sleepcheck; read -r -p "Enter to close " _'
+Touchscreen off (saves power)	iskra-term Touchscreen sh -c 'sudo framework_tool --touchscreen-enable false; read -r -p "Enter to close " _'
+Touchscreen on	iskra-term Touchscreen sh -c 'sudo framework_tool --touchscreen-enable true; read -r -p "Enter to close " _'
+Keyboard light off	iskra-term 'Keyboard light' sh -c 'sudo framework_tool --kblight 0; read -r -p "Enter to close " _'
+Keyboard light on (50 %)	iskra-term 'Keyboard light' sh -c 'sudo framework_tool --kblight 50; read -r -p "Enter to close " _'
+Touchpad click: light / medium / firm…	iskra-menu clickforce
+Disks	iskra-term Disks sh -c 'lsblk -f; df -h -x tmpfs -x devtmpfs; read -r -p "Enter to close " _'
+Night light on/off	iskra-nightlight toggle
+Fingerprint: add a finger (for sudo)	iskra-term Fingerprint sh -c 'fprintd-enroll; read -r -p "Enter to close " _'
+Firewall rules (nftables)	iskra-term Firewall sh -c 'sudo nft list ruleset | less'
+Firmware updates (fwupdtool)	iskra-term Firmware sh -c 'sudo fwupdtool refresh; sudo fwupdtool get-updates; read -r -p "Enter to close " _'
+M
+)" ;;
+power)
+  run "$(pick 'Power' <<'M'
+Lock	xset s activate
+Suspend	iskra-sleep suspend
+Hibernate	iskra-sleep hibernate
+Log out	ratpoison -c quit
+Restart	sudo /sbin/reboot
+Power off	sudo /sbin/poweroff
+M
+)" ;;
+*) echo "usage: iskra-menu [main|russian|learn|system|power]" >&2; exit 2 ;;
+esac

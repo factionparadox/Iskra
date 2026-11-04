@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# slackware-root: a Slackware64-current system in a folder, from any Linux (Arch on WSL is fine).
+# Nothing is compiled: every package is Slackware's own, installed with Slackware's own installpkg.
+#
+#   sudo build/slackware-root ROOT [SERIES...]      default series: a ap d l n x xap
+#
+# Settings (environment):
+#   SLACK_MIRROR   a Slackware mirror's slackware64-current folder
+#                  (default https://slackware.uk/slackware/slackware64-current)
+#   SLACK_CACHE    where downloaded packages are kept between runs (default ~/.cache/iskra/slackware)
+#   SLACK_SKIP     package names (without version) to leave out, space-separated
+#
+# Trust: Slackware signs CHECKSUMS.md5 with its project key (fingerprint pinned below). The list
+# is checked against that key, and every package against the list, before anything is installed.
+set -Eeuo pipefail
+trap 'echo "slackware-root: stopped at line $LINENO (exit $?)" >&2' ERR
+die() { printf '\nslackware-root: %s\n' "$*" >&2; exit 2; }
+say() { printf '\n==> %s\n' "$*"; }
+
+ROOT=${1:?usage: slackware-root ROOT [SERIES...]}; shift
+SERIES=${*:-a ap d l n x xap}
+MIRROR=${SLACK_MIRROR:-https://slackware.uk/slackware/slackware64-current}
+CACHE=${SLACK_CACHE:-${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)/.cache/iskra/slackware}}
+CACHE=${CACHE:-$HOME/.cache/iskra/slackware}
+SKIP=${SLACK_SKIP:-}
+KEY_FPR=EC5649DA401E22ABFA6736EF6A4463C040102233   # Slackware Linux Project <security@slackware.com>
+[[ $EUID -eq 0 ]] || die "run it with sudo (installpkg needs root to set owners and run install scripts)"
+for t in curl gpg md5sum tar xz; do command -v $t >/dev/null || die "$t is needed"; done
+mkdir -p "$CACHE" "$ROOT"
+cd "$CACHE"
+
+say "Slackware's key and signed package list ($MIRROR)"
+gnupg=$(mktemp -d); trap 'rm -rf "$gnupg"' EXIT
+curl -fsSL -o GPG-KEY "$MIRROR/GPG-KEY"
+gpg --homedir "$gnupg" --batch --quiet --import GPG-KEY 2>/dev/null
+gpg --homedir "$gnupg" --batch --with-colons --fingerprint 2>/dev/null | grep -q "^fpr:::::::::$KEY_FPR:" ||
+  die "the mirror's GPG-KEY is not Slackware's key $KEY_FPR"
+curl -fsSL -o CHECKSUMS.md5 "$MIRROR/CHECKSUMS.md5"
+curl -fsSL -o CHECKSUMS.md5.asc "$MIRROR/CHECKSUMS.md5.asc"
+gpg --homedir "$gnupg" --batch --status-fd 1 --verify CHECKSUMS.md5.asc CHECKSUMS.md5 2>/dev/null |
+  grep -q "VALIDSIG $KEY_FPR" || die "CHECKSUMS.md5 is not signed by Slackware's key"
+echo "    signed by $KEY_FPR"
+
+# every package of the chosen series: "md5 path"
+list=$(mktemp)
+for s in $SERIES; do
+  awk -v s="./slackware64/$s/" 'index($2, s) == 1 && $2 ~ /\.txz$/ { rest = substr($2, length(s) + 1); if (rest !~ /\//) print }' CHECKSUMS.md5
+done > "$list"
+[[ -s $list ]] || die "no packages found for: $SERIES"
+skip_pkg() {   # skip_pkg FILE: is this package's name in SLACK_SKIP?
+  local n=${1##*/}; n=${n%-*-*-*}
+  [[ " $SKIP " == *" $n "* ]]
+}
+total=$(wc -l < "$list")
+say "Downloading $total packages ($SERIES); those already here are checked, not fetched again"
+n=0
+while read -r sum path; do
+  n=$((n + 1))
+  skip_pkg "$path" && continue
+  f=${path#./}
+  mkdir -p "$(dirname "$f")"
+  if [[ ! -f $f ]] || ! echo "$sum  $f" | md5sum -c --status; then
+    printf '  [%4d of %d] %s\n' "$n" "$total" "${f##*/}"
+    curl -fsSL --retry 3 -o "$f.part" "$MIRROR/$f" && mv "$f.part" "$f"
+    echo "$sum  $f" | md5sum -c --status || die "${f##*/} does not match Slackware's signed checksum"
+  fi
+done < "$list"
+
+say "Installing into $ROOT with Slackware's installpkg"
+tools=$(mktemp -d)
+pkgtools=$(awk '$2 ~ /\/a\/pkgtools-[^\/]*\.txz$/ { print $2 }' CHECKSUMS.md5 | head -n 1)
+[[ -n $pkgtools ]] || die "no pkgtools package in the list"
+tar -xJf "${pkgtools#./}" -C "$tools" sbin/installpkg
+installpkg() { "$tools/sbin/installpkg" --root "$ROOT" --terse "$@"; }
+# the filesystem layout first, then glibc, then everything else in Slackware's own order
+for first in aaa_base aaa_glibc-solibs glibc; do
+  f=$(awk -v p="/a/$first-" 'index($2, p) && $2 ~ /\.txz$/ { print $2 }' "$list" | head -n 1)
+  [[ -n $f ]] && installpkg "${f#./}"
+done
+n=0
+while read -r sum path; do
+  n=$((n + 1))
+  skip_pkg "$path" && continue
+  name=${path##*/}; name=${name%.txz}
+  [[ -e $ROOT/var/lib/pkgtools/packages/$name ]] && continue
+  installpkg "${path#./}" || die "installpkg failed on ${path##*/}"
+done < "$list"
+rm -rf "$tools" "$list"
+echo "    $(ls "$ROOT/var/lib/pkgtools/packages" | wc -l) packages installed in $ROOT"
