@@ -33,7 +33,7 @@ x-terminal              iskra:x-terminal
 font-go                 iskra:font-go
 font-ipaex              iskra:font-ipaex
 zig                     iskra:zig          # ly is built with it; its own build (from source: hours)
-ly                      arch:ly
+ly                      iskra:ly           # Arch's way, from git at Arch's commits
 networkmanager-dmenu    arch:networkmanager-dmenu
 udiskie                 ponce:system/udiskie
 pulsemixer              ponce:audio/pulsemixer

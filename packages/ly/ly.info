@@ -1,0 +1,8 @@
+PRGNAM="ly"
+VERSION="1.4.1"
+HOMEPAGE="https://codeberg.org/fairyglade/ly"
+DOWNLOAD="git+https://codeberg.org/fairyglade/ly.git#commit=afb1dc62a0568743c9a7952623ec179128c73340 git+https://codeberg.org/ziglang/arocc.git#commit=5f5a050569a95ecc40a426f0c3666ae7ef987ede git+https://github.com/Hejsil/zig-clap.git#commit=fc1e5cc3f6d9d3001112385ee6256d694e959d2f git+https://github.com/AshAmetrine/ziglibs-ini.git#commit=3b733e10adc6c4c48050709b97a22258bc2e6156 git+https://github.com/AnErrupTion/termbox2.git#commit=c7f241e8888ce243e1748b05c26a42fcfaaad936 git+https://codeberg.org/ziglang/translate-c.git#commit=7a1a9fdc4ab00835748a6657ecbb835e3d5d45f7 git+https://github.com/AshAmetrine/zigini.git#commit=a665d081dda42664a96da2840ea09c5ccf9d0692"
+SHA256SUM="SKIP SKIP SKIP SKIP SKIP SKIP SKIP"
+REQUIRES=""
+BUILD_REQUIRES="zig"
+MAINTAINER="Iskra"

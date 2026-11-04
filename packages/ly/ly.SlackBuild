@@ -1,0 +1,56 @@
+#!/bin/bash
+# ly.SlackBuild: Iskra's SlackBuild for ly, the login screen. Run in this folder, as root.
+# Built as Arch builds it (zig, the same options), from git, each source pinned to the exact
+# commit Arch's recipe uses: Codeberg makes its source archives on demand and their bytes change,
+# so archive checksums can't be relied on; a commit names the content exactly.
+PRGNAM=ly
+. ../lib.sh
+B=$TMP/ly-build
+rm -rf $B; mkdir -p $B/zig-cache; cd $B
+export HOME=$B ZIG_GLOBAL_CACHE_DIR=$B/zig-cache ZIG_LOCAL_CACHE_DIR=$B/zig-local
+tar xf $CWD/ly-afb1dc62a0568743c9a7952623ec179128c73340.tar.gz
+cd ly-afb1dc62a0568743c9a7952623ec179128c73340
+# ly's dependencies (build.zig.zon), into the project's zig-pkg: zig knows them by their contents'
+# hash, so these git checkouts are the very packages build.zig.zon names
+mkdir -p zig-pkg
+for t in arocc zig-clap ziglibs-ini termbox2 translate-c zigini; do
+  zig fetch $CWD/$t-*.tar.gz
+done
+# --system looks for each unpacked in zig-pkg/<hash>; zig fetch keeps them in its cache's p/,
+# as a folder or (newer zig) as <hash>.tar.gz holding <hash>/<top folder>/...
+for d in $ZIG_GLOBAL_CACHE_DIR/p/*; do
+  h=${d##*/}; h=${h%.tar.gz}
+  [ -e "zig-pkg/$h" ] && continue
+  if [ -d "$d" ]; then cp -a "$d" "zig-pkg/$h"; else tar xzf "$d" -C zig-pkg; fi
+  # a lone top folder (the archive's name-commit/) is lifted, as zig strips it when hashing
+  if [ "$(ls -A zig-pkg/$h | wc -l)" = 1 ] && [ -d "zig-pkg/$h/$(ls -A zig-pkg/$h)" ]; then
+    mv "zig-pkg/$h/$(ls -A zig-pkg/$h)" zig-pkg/$h.inner && rmdir zig-pkg/$h && mv zig-pkg/$h.inner zig-pkg/$h
+  fi
+done
+ls zig-pkg
+# zig looks for libraries in <prefix>/lib; Slackware keeps them in /usr/lib64
+mkdir -p $B/prefix; ln -sfn /usr/lib64 $B/prefix/lib; ln -sfn /usr/include $B/prefix/include
+# built against the glibc this Slackware has
+GLIBC=$(ldd --version | sed -n "1s/.* //p")
+for step in "" installexe; do
+  zig build --search-prefix $B/prefix -Ddest_directory="$PKG" --cache-dir $B/zig-local \
+    --system "$PWD/zig-pkg" --build-id=sha1 -Dtarget=x86_64-linux.6.6-gnu.$GLIBC -Dcpu=baseline \
+    -Doptimize=ReleaseSafe $step
+done
+# Iskra starts ly from /etc/inittab (through /usr/lib/iskra/login), not as a service
+rm -rf $PKG/usr/lib/systemd $PKG/etc/systemd $PKG/etc/init.d $PKG/etc/runit $PKG/etc/sv
+install -Dm644 license.md $PKG/usr/doc/$PRGNAM-$VERSION/WTFPL
+# its settings files go in as .new, so your edited copies are kept on upgrade
+mkdir -p $PKG/install
+cat > $PKG/install/doinst.sh <<'DOINST'
+config() {
+  NEW="$1"; OLD="$(dirname "$NEW")/$(basename "$NEW" .new)"
+  if [ ! -r "$OLD" ]; then mv "$NEW" "$OLD"
+  elif [ "$(md5sum < "$OLD")" = "$(md5sum < "$NEW")" ]; then rm "$NEW"; fi
+}
+DOINST
+for f in etc/ly/config.ini etc/ly/setup.sh etc/ly/startup.sh etc/pam.d/ly etc/pam.d/ly-autologin; do
+  [ -f $PKG/$f ] && mv $PKG/$f $PKG/$f.new && echo "config $f.new" >> $PKG/install/doinst.sh
+done
+chown -R root:root $PKG
+finish

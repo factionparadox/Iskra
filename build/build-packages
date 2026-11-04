@@ -218,7 +218,17 @@ class Builder:
             # BUILD_REQUIRES is what building needs
             need = [self.ready_name(r) or r for r in reqs]
             reqs = info.get('BUILD_REQUIRES', '').split()
-        for r in reqs:                                     # ready-made first, else Ponce's, built first
+        for r in reqs:      # installed already, Iskra's own recipe, a ready-made package, Ponce's last
+            if self.installed(r) or r in self.done:
+                if not iskra:
+                    need.append(r)
+                continue
+            own = iskra_recipes().get(r)
+            if own:
+                self.slackbuild(r, HERE / 'packages' / own, stack=stack + (name,), iskra=True)
+                if not iskra:
+                    need.append(r)
+                continue
             ready = self.ready_name(r)
             if ready:
                 if not iskra:
@@ -331,6 +341,11 @@ class Builder:
         self.reqfile.write_text(json.dumps(self.requires, indent=2, sort_keys=True))
         self.made(name, fpr, [self.out / f.name for f in made if f.name.rsplit('-', 3)[0] == name])
         self.done.add(name)
+
+
+def iskra_recipes():
+    """name -> folder, for the Iskra recipes packages/LIST names (they come before Ponce's)."""
+    return {n: src.partition(':')[2] for n, src, _ in entries() if src.startswith('iskra:')}
 
 
 def entries():
