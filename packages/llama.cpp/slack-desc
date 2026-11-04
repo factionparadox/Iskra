@@ -6,12 +6,12 @@
          |-----handy-ruler------------------------------------------------------|
 llama.cpp: llama.cpp (run language models locally)
 llama.cpp:
-llama.cpp: llama.cpp runs AI language models on the laptop itself,
-llama.cpp: offline: the Russian tutor's brain. Built for every x86-64
-llama.cpp: processor, choosing the fastest code for this one when it
-llama.cpp: starts (GGML_CPU_ALL_VARIANTS), with Vulkan for the Intel
-llama.cpp: graphics.
+llama.cpp: llama.cpp runs AI language models on the laptop itself, offline:
+llama.cpp: the Russian tutor's brain. llama.cpp's own ready-made build,
+llama.cpp: with a CPU part for every x86-64 processor (the best one is
+llama.cpp: chosen when it starts) and Vulkan for the Intel graphics.
 llama.cpp:
 llama.cpp: https://github.com/ggml-org/llama.cpp
+llama.cpp:
 llama.cpp:
 llama.cpp:

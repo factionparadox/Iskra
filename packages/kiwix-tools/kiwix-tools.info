@@ -1,0 +1,7 @@
+PRGNAM="kiwix-tools"
+VERSION="3.8.2"
+HOMEPAGE="https://kiwix.org"
+DOWNLOAD="https://mirror.download.kiwix.org/release/kiwix-tools/kiwix-tools_linux-x86_64-3.8.2.tar.gz"
+SHA256SUM="b0ae98dd344aa0469a15ab42feff6d5aafb79541a82fb4e2647c74b073123815"
+REQUIRES=""
+MAINTAINER="Iskra"

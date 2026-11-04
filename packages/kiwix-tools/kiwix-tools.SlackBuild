@@ -1,0 +1,10 @@
+#!/bin/bash
+# kiwix-tools.SlackBuild: Iskra's SlackBuild for kiwix-tools. Run in this folder, as root.
+# Kiwix's own ready-made Linux build (self-contained programs), unpacked: nothing compiled.
+PRGNAM=kiwix-tools
+. ../lib.sh
+cd $TMP; rm -rf kiwix-tools_linux-x86_64-$VERSION; tar xf $CWD/kiwix-tools_linux-x86_64-$VERSION.tar.gz
+install -d $PKG/usr/bin
+install -m755 kiwix-tools_linux-x86_64-$VERSION/kiwix-* $PKG/usr/bin/
+cd $PKG; slackdesc
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-$ARCH-$BUILD$TAG.$PKGTYPE"

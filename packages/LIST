@@ -37,8 +37,6 @@ networkmanager-dmenu    arch:networkmanager-dmenu
 udiskie                 ponce:system/udiskie
 pulsemixer              ponce:audio/pulsemixer
 bluetuith               aur:bluetuith
-zathura                 ponce:office/zathura
-zathura-pdf-mupdf       ponce:office/zathura-pdf-mupdf
 chrony                  ponce:network/chrony
 
 # the 13 Pro: power, temperature and Framework's own tool
@@ -58,7 +56,7 @@ hunspell-en             ponce:office/hunspell-en
 hunspell-russian-aot    ponce:office/hunspell-russian-aot
 llama.cpp               iskra:llama.cpp
 piper-tts               iskra:piper-tts
-kiwix-tools             ponce:system/kiwix-tools
+kiwix-tools             iskra:kiwix-tools
 
 # Iskra itself
 sparkpkg                iskra:sparkpkg
