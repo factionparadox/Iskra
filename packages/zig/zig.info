@@ -1,0 +1,7 @@
+PRGNAM="zig"
+VERSION="0.17.0"
+HOMEPAGE="https://ziglang.org"
+DOWNLOAD="https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz"
+SHA256SUM="1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026"
+REQUIRES=""
+MAINTAINER="Iskra"

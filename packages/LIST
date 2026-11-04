@@ -32,6 +32,7 @@ plan9port               ponce:system/plan9port
 x-terminal              iskra:x-terminal
 font-go                 iskra:font-go
 font-ipaex              iskra:font-ipaex
+zig                     iskra:zig          # ly is built with it; its own build (from source: hours)
 ly                      arch:ly
 networkmanager-dmenu    arch:networkmanager-dmenu
 udiskie                 ponce:system/udiskie

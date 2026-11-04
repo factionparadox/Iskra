@@ -1,0 +1,15 @@
+#!/bin/bash
+# zig.SlackBuild: Iskra's SlackBuild for zig. Run in this folder, as root.
+# Zig's own ready-made Linux build, unpacked: nothing compiled (building zig from source takes
+# hours). ly is built with it. zig finds its standard library beside its real self, so it lives
+# in /usr/lib64/zig with a link in /usr/bin.
+PRGNAM=zig
+. ../lib.sh
+cd $TMP; rm -rf zig-x86_64-linux-$VERSION; tar xf $CWD/zig-x86_64-linux-$VERSION.tar.xz
+install -d $PKG/usr/lib64 $PKG/usr/bin $PKG/usr/doc/$PRGNAM-$VERSION
+cp -a zig-x86_64-linux-$VERSION $PKG/usr/lib64/zig
+mv $PKG/usr/lib64/zig/LICENSE $PKG/usr/lib64/zig/README.md $PKG/usr/doc/$PRGNAM-$VERSION/ 2>/dev/null || true
+chown -R root:root $PKG/usr/lib64/zig
+ln -s ../lib64/zig/zig $PKG/usr/bin/zig
+cd $PKG; slackdesc
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-$ARCH-$BUILD$TAG.$PKGTYPE"
