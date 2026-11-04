@@ -10,7 +10,7 @@
 # that script is executable (chmod -x /etc/rc.d/rc.tlp stops TLP starting at boot, for example).
 
 # battery and power: TLP's settings, Intel's thermal and low-power daemons for the 13 Pro
-# clock: chrony; the firewall; the Russian tutor's language model
+# clock: chrony, or Slackware's ntpd; the firewall; the Russian tutor's language model
 SERVICES="firewall tlp thermald lpmd chrony tutor"
 
 say() { printf 'rc.iskra: %s\n' "$*"; }
@@ -23,7 +23,8 @@ start_one() {
                 /usr/sbin/thermald --adaptive --ignore-cpuid-check ;;
     lpmd)     [ -x /usr/bin/intel_lpmd ] && ! pgrep -x intel_lpmd >/dev/null &&
                 /usr/bin/intel_lpmd ;;
-    chrony)   [ -x /etc/rc.d/rc.chrony ] && /etc/rc.d/rc.chrony start ;;
+    chrony)   if [ -x /etc/rc.d/rc.chrony ]; then /etc/rc.d/rc.chrony start
+              elif [ -f /etc/rc.d/rc.ntpd ] && ! pgrep -x ntpd >/dev/null; then sh /etc/rc.d/rc.ntpd start; fi ;;
     tutor)    [ -x /etc/rc.d/iskra-tutor ] && /etc/rc.d/iskra-tutor start ;;
   esac
 }
@@ -34,7 +35,8 @@ stop_one() {
     tlp)      [ -x /etc/rc.d/rc.tlp ] && /etc/rc.d/rc.tlp stop ;;
     thermald) pkill -x thermald ;;
     lpmd)     pkill -x intel_lpmd ;;
-    chrony)   [ -x /etc/rc.d/rc.chrony ] && /etc/rc.d/rc.chrony stop ;;
+    chrony)   if [ -x /etc/rc.d/rc.chrony ]; then /etc/rc.d/rc.chrony stop
+              elif [ -f /etc/rc.d/rc.ntpd ]; then sh /etc/rc.d/rc.ntpd stop; fi ;;
     tutor)    [ -x /etc/rc.d/iskra-tutor ] && /etc/rc.d/iskra-tutor stop ;;
   esac
 }
@@ -45,7 +47,7 @@ case ${1:-} in
   stop)
     for s in $(echo $SERVICES | tr ' ' '\n' | tac); do stop_one $s >/dev/null 2>&1; done ;;
   status)
-    for p in thermald intel_lpmd chronyd llama-server; do
+    for p in thermald intel_lpmd chronyd ntpd llama-server; do
       printf '%-14s %s\n' "$p" "$(pgrep -x $p >/dev/null && echo running || echo 'not running')"
     done
     [ -x /etc/rc.d/rc.tlp ] && printf '%-14s %s\n' tlp "$(tlp-stat -s 2>/dev/null | awk -F'= ' '/^State/ {print $2}')"
