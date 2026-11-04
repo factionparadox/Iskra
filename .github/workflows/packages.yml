@@ -76,8 +76,44 @@ jobs:
             --pattern 'ChangeLog.txt' --pattern 'PACKAGES.TXT' --pattern 'built.json' || echo "nothing published yet"
           ls out | wc -l
 
+      - name: What earlier runs built but didn't publish (a run stopped part-way)
+        uses: actions/cache/restore@v4
+        with:
+          path: out-cache
+          key: iskra-built-${{ github.run_id }}
+          restore-keys: iskra-built-
+
       - name: Build
-        run: sudo build/build-packages /mnt/root out ${{ github.event.inputs.only }}
+        run: |
+          # packages an earlier, unfinished run built: used when unchanged (build-packages checks)
+          if [ -d out-cache ]; then
+            for f in out-cache/*.txz; do [ -e "out/$(basename "$f")" ] || cp "$f" out/; done
+            [ -f out/built.json ] || cp out-cache/built.json out/ 2>/dev/null || true
+            python3 - <<'PY'
+          import json, pathlib
+          o, c = pathlib.Path('out'), pathlib.Path('out-cache')
+          for f in ('built.json', 'requires.json'):
+              if (c / f).is_file():
+                  cur = json.loads((o / f).read_text()) if (o / f).is_file() else {}
+                  old = json.loads((c / f).read_text())
+                  (o / f).write_text(json.dumps({**cur, **old}, indent=2, sort_keys=True))   # the newer (unpublished) wins
+          PY
+          fi
+          sudo build/build-packages /mnt/root out ${{ github.event.inputs.only }}
+
+      - name: Keep what was built, even if the build stopped part-way
+        if: always()
+        run: |
+          sudo rm -rf out-cache && mkdir out-cache
+          sudo cp out/*.txz out/built.json out/requires.json out-cache/ 2>/dev/null || true
+          sudo chown -R "$USER" out-cache
+
+      - name: Save it for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: out-cache
+          key: iskra-built-${{ github.run_id }}
 
       - name: Make and sign the repository
         env:
