@@ -45,7 +45,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq curl gnupg xz-utils zstd git
 
       - name: Slackware's packages, kept between runs
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /mnt/slackware-cache
           key: slackware-current-${{ github.run_id }}
@@ -55,6 +55,14 @@ jobs:
         run: |
           sudo mkdir -p /mnt/slackware-cache && sudo chown -R "$USER" /mnt/slackware-cache
           sudo SLACK_CACHE=/mnt/slackware-cache build/slackware-root /mnt/root a ap d l n x xap
+          sudo chown -R "$USER" /mnt/slackware-cache
+
+      - name: Keep Slackware's packages for next time (even if a later step fails)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/slackware-cache
+          key: slackware-current-${{ github.run_id }}
 
       - name: Ready it for building (slpkg, fakeroot, sparkpkg, the repositories' lists)
         run: sudo build/ci-root /mnt/root

@@ -27,6 +27,8 @@ run() {   # a command in ROOT, as root, with the network settings this machine h
     ${GIT_SSL_CAINFO:+GIT_SSL_CAINFO=$GIT_SSL_CAINFO} "$@"
 }
 run /sbin/ldconfig
+# the certificate store (an older root, made before slackware-root did this itself)
+[[ -s $ROOT/etc/ssl/certs/ca-certificates.crt ]] || run /usr/sbin/update-ca-certificates --fresh >/dev/null
 
 say "sparkpkg, from this repository"
 src=$HERE/desktop/root

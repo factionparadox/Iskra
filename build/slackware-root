@@ -92,4 +92,12 @@ while read -r sum path; do
   installpkg "${path#./}" || die "installpkg failed on ${path##*/}"
 done < "$list"
 rm -rf "$tools" "$list"
+# Install scripts that only work on a running system, done now: the certificate store (without it
+# nothing in ROOT can check an HTTPS certificate) and the library cache
+if [[ -x $ROOT/usr/sbin/update-ca-certificates ]]; then
+  chroot "$ROOT" /usr/sbin/update-ca-certificates --fresh >/dev/null 2>&1 ||
+    die "could not make the certificate store in $ROOT"
+  echo "    certificate store: $(ls "$ROOT/etc/ssl/certs" | wc -l) entries"
+fi
+chroot "$ROOT" /sbin/ldconfig 2>/dev/null || true
 echo "    $(ls "$ROOT/var/lib/pkgtools/packages" | wc -l) packages installed in $ROOT"
