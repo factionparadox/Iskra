@@ -1,0 +1,9 @@
+#!/bin/sh
+# The first console's login (from /etc/inittab, through agetty): ly, Iskra's login screen, or
+# Slackware's ordinary text login if ly isn't installed or won't start, so there is always a
+# way in.
+if [ -x /usr/bin/ly ]; then
+  /usr/bin/ly && exit 0
+  echo "ly didn't start; here is the ordinary login instead." >&2
+fi
+exec /bin/login

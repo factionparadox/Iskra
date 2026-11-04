@@ -11,6 +11,7 @@
   assimilate search WORD        search the AUR and Arch by name and description
   assimilate outdated           assimilated packages with a newer recipe (one name per line)
   assimilate expand NAME...     NAME and everything it requires across every repository, deps first
+  assimilate fetch DIR NAME...  download ready-made packages into DIR, checksums and signatures checked
 
 Where a dependency's answer comes from, in order:
   1. names.tsv: Arch names Slackware spells differently, and things every Iskra system has
@@ -613,6 +614,57 @@ def expand(names):
     return order
 
 
+def trusted_fingerprints():
+    out = set()
+    f = SHARE / 'keys/FINGERPRINTS'
+    if f.is_file():
+        for line in f.read_text().splitlines():
+            line = line.split()
+            if len(line) >= 2 and not line[0].startswith('#'):
+                out.add(line[1].upper())
+    return out
+
+
+def fetch_packages(names, dest):
+    """Download ready-made packages, each checked against its repository's checksum and its signature
+    by one of the pinned keys (root's keyring holds them: sparkpkg sync imports them)."""
+    import hashlib
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    slack = Slackware()
+    data = {}
+    for repo in reversed(slack.repos):
+        f = SLPKG_REPOS / repo / 'data.json'
+        if f.is_file() and repo not in ('ponce', 'sbo'):
+            data.update({n: v for n, v in json.loads(f.read_text()).items()})
+    trusted = trusted_fingerprints()
+    got = []
+    for n in names:
+        v = data.get(n)
+        if not v:
+            raise SystemExit(f'sparkpkg: no ready-made package called {n}')
+        base = v['mirror'].rstrip('/') + '/' + (v['location'].strip('/') + '/' if v['location'].strip('./') else '')
+        pkg = dest / v['package']
+        for f, url in ((pkg, base + v['package']), (Path(f'{pkg}.asc'), base + v['package'] + '.asc')):
+            if not f.is_file():
+                if url.startswith('/') or url.startswith('file://'):
+                    shutil.copy2(url.removeprefix('file://'), f)
+                else:
+                    f.write_bytes(get(url, binary=True))
+        if v.get('checksum') and hashlib.md5(pkg.read_bytes()).hexdigest() != v['checksum']:
+            pkg.unlink()
+            raise SystemExit(f'sparkpkg: {pkg.name} does not match its repository\'s checksum')
+        st = subprocess.run(['gpg', '--batch', '--status-fd', '1', '--verify', f'{pkg}.asc', str(pkg)],
+                            capture_output=True, text=True).stdout
+        fpr = next((l.split()[-1].upper() for l in st.splitlines() if ' VALIDSIG ' in f' {l} '), None)
+        if not fpr or fpr not in trusted:
+            pkg.unlink()
+            raise SystemExit(f'sparkpkg: {pkg.name} is not signed by a trusted key')
+        say(f'    {pkg.name}  ({v["repo"]}, signed {fpr[-16:]})')
+        got.append(pkg)
+    return got
+
+
 def main(argv):
     if not argv or argv[0] in ('-h', '--help', 'help'):
         print(__doc__.strip()); return 0
@@ -657,6 +709,10 @@ def main(argv):
         print(' '.join(str(x) for x in a if x is not None))
     elif cmd == 'expand':
         print('\n'.join(expand(args)))
+    elif cmd == 'fetch':
+        if len(args) < 2:
+            raise SystemExit('usage: assimilate fetch DIR NAME...')
+        fetch_packages(args[1:], args[0])
     elif cmd == 'search':
         search(' '.join(args))
     elif cmd == 'outdated':
