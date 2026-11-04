@@ -4,7 +4,7 @@
                                               pieces and its fonts (.pf2, with Cyrillic)
 The installer copies it to /boot/grub/themes/iskra.
 
-The screen: Паша (branding/pasha.png) on the left in a red glow against a starry night,
+The screen: Паша the wolf pup (branding/pasha.png) on the left, howling, in a red glow against a starry night,
 ИСКРА and the menu on the right. Drawn for the 13 Pro's 3:2 panel
 (2880 x 1920); GRUB crops it to other shapes.
 Needs Pillow and grub-mkfont (grub's tools):  python3 build/make-grub-theme.py
@@ -40,7 +40,7 @@ def background():
     for r in range(1100, 0, -20):
         gd.ellipse((cx - r, cy - r * 0.9, cx + r, cy + r * 0.9), fill=int(255 * (1 - r / 1100) ** 1.6))
     img = Image.composite(Image.new('RGB', (W, H), DARKRED), img, glow.filter(ImageFilter.GaussianBlur(60)))
-    # the night sky: a scatter of faint stars, and the Southern Cross itself, large and dim
+    # the night sky: a scatter of faint stars for him to howl at
     d = ImageDraw.Draw(img)
     rnd = random.Random(1999)
     for _ in range(420):
@@ -48,13 +48,12 @@ def background():
         v = rnd.randrange(40, 95)
         s = rnd.choice((1, 1, 1, 2, 2, 3))
         d.ellipse((x, y, x + s, y + s), fill=(v, v, v + 6))
-    # Pasha, his black backdrop made see-through
-    pasha = Image.open(ROOT / 'branding/pasha.png').convert('RGB')
-    pasha = pasha.crop((380, 20, 1160, 1000))
-    scale = 1180 / pasha.height
-    pasha = pasha.resize((int(pasha.width * scale), 1180), Image.LANCZOS)
-    mask = pasha.convert('L').point(lambda v: 0 if v < 10 else min(255, (v - 10) * 12))
-    img.paste(pasha, (cx - pasha.width // 2, cy - pasha.height // 2 + 20), mask.filter(ImageFilter.GaussianBlur(1)))
+    # Pasha, the wolf pup, howling up at the stars (his picture has a see-through background)
+    pasha = Image.open(ROOT / 'branding/pasha.png').convert('RGBA')
+    pasha = pasha.crop(pasha.getchannel('A').getbbox())
+    scale = 1150 / pasha.height
+    pasha = pasha.resize((int(pasha.width * scale), 1150), Image.LANCZOS)
+    img.paste(pasha, (cx - pasha.width // 2, cy - pasha.height // 2 + 40), pasha)
     # ИСКРА, the name, and a red rule under them
     d = ImageDraw.Draw(img)
     title = ImageFont.truetype(BOLD, 230)
@@ -125,7 +124,8 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     background().save(OUT / 'background.png', optimize=True)
     highlight()
-    fonts()
+    if not all((OUT / f'{n}.pf2').exists() for n in ('menu', 'hint', 'menu-bold')):
+        fonts()
     (OUT / 'theme.txt').write_text(THEME)
     for f in sorted(OUT.iterdir()):
         print(f'{f.stat().st_size:>9}  {f.relative_to(ROOT)}')
