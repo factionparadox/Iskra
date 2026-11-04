@@ -63,7 +63,7 @@ M
 learn)
   run "$(pick 'Learn' <<'M'
 Lessons	iskra-term Learn iskra-learn browse
-Wiki: CRUX explained (ports, prt-get, rc scripts ...)	iskra-term Wiki iskra-learn wiki
+Wiki: Slackware explained (sparkpkg, packages, rc.d ...)	iskra-term Wiki iskra-learn wiki
 Wiki page…	iskra-menu wikipage
 Search the lessons and the wiki…	iskra-menu search
 System map (what is running)	iskra-term 'System map' sh -c 'iskra-learn doctor; read -r -p "Enter to close " _'
@@ -91,8 +91,8 @@ manual)
   [ -n "$page" ] && setsid -f iskra-term "man $page" man "$page" ;;
 system)
   run "$(pick 'System' <<'M'
-Update everything (sync the ports, then rebuild what changed)	iskra-term Update sh -c 'iskra-update; read -r -p "Enter to close " _'
-What would update (prt-get diff)	iskra-term Updates sh -c 'prt-get diff | less'
+Update everything (sparkpkg upgrade)	iskra-term Update sh -c 'iskra-update; read -r -p "Enter to close " _'
+What would update	iskra-term Updates sh -c 'iskra-update --dry 2>&1 | less'
 Services (/etc/rc.d)	iskra-term Services sh -c 'for s in /etc/rc.d/*; do printf "%-18s " "${s##*/}"; sudo "$s" status 2>&1 | head -n 1; done | less'
 The log (/var/log/messages)	iskra-term Log sudo less +G /var/log/messages
 Processes (htop)	iskra-term htop htop

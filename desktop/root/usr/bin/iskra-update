@@ -1,26 +1,27 @@
 #!/bin/sh
-# Update everything, the CRUX way: fetch the newest ports (CRUX's collections and Iskra's own,
-# from this system's copy of the Iskra repository), then rebuild whatever changed.
-#   iskra-update          ports -u, then prt-get sysup (every update, built here)
-#   iskra-update --dry    only show what would be rebuilt
-# The kernel is a port too ("linux"); after it rebuilds, restart to use it.
+# Update everything: Slackware -current and the other repositories (ready-made packages,
+# nothing compiled), then anything sparkpkg built from an Arch or AUR recipe that has a newer one.
+#   iskra-update          sparkpkg upgrade
+#   iskra-update --dry    only show what would change
+# A new kernel takes effect after a restart; GRUB's menu is remade for it on the way.
 set -e
 [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
-echo "==> Iskra's own ports (git pull in /usr/src/iskra, checked and copied to /usr/ports/iskra)"
-git -C /usr/src/iskra pull --ff-only
-/usr/src/iskra/build/iskra-ports sync /usr/src/iskra
-echo
-echo "==> CRUX's ports (ports -u)"
-ports -u
-echo
 if [ "${1:-}" = --dry ]; then
-	prt-get diff
+	slpkg update
+	slpkg upgrade -o all --dry-run
+	echo
+	echo "==> Recipes sparkpkg built that have newer versions"
+	/usr/lib/sparkpkg/assimilate outdated | awk '{ printf "  %-28s %-5s %s -> %s\n", $1, $2, $3, $4 } END { if (!NR) print "  none" }'
 	exit 0
 fi
-echo "==> Rebuilding what changed (prt-get sysup; each build shows here)"
-prt-get sysup
+sparkpkg upgrade
 echo
-echo "==> The CRUX handbook, for reading offline"
+echo "==> The Slackware book, for reading offline"
 iskra-handbook update || true
 echo
-echo "Done. Anything new that was kept aside: sudo rejmerge"
+new=$(find /etc -name '*.new' 2>/dev/null)
+if [ -n "$new" ]; then
+	echo "Updated settings files were kept aside, beside your own copies (compare, then keep one):"
+	printf '  %s\n' $new
+fi
+echo "Done. Changed your mind?  sudo sparkpkg undo"

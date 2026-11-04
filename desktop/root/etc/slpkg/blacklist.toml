@@ -1,0 +1,23 @@
+# Blacklist file for slpkg.
+# Location: /etc/slpkg/blacklist.toml
+# Last Updated: 30/09/2026
+# Version: 6.1.7
+
+# Packages listed here will not be upgraded, built,
+# or installed by slpkg.
+
+# WARNING: Ignoring packages during builds, installations,
+# or upgrades may cause issues in some cases. Use this feature
+# with caution and only when absolutely necessary.
+
+# You can add packages using regular expressions.
+# Example to blacklist all Python 2 packages:
+# "python2"
+
+# To blacklist a specific package using a regex pattern:
+# "^package_name$"
+
+# Example:
+# PACKAGES = ["python2", "^python3-build$"]
+
+PACKAGES = []

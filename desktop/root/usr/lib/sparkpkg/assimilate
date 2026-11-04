@@ -1,0 +1,628 @@
+#!/usr/bin/python3 -I
+"""sparkpkg's assimilator: turns Arch Linux and AUR recipes (PKGBUILDs) into Slackware packages.
+
+  assimilate plan NAME...       work out what NAME needs: Slackware packages to install first,
+                                and Arch/AUR recipes to convert and build, in order (prints JSON)
+  assimilate make NAME          fetch NAME's recipe and write its SlackBuild (prints the folder)
+  assimilate resolve DEP...     show which Slackware package (or recipe) answers each dependency
+  assimilate info NAME          show what the AUR and Arch know about NAME
+  assimilate run NAME...        plan, then build and install (what  sparkpkg aur/arch  does)
+  assimilate where NAME         one line: slackware PKG REPO | arch PKG BASE | aur PKG BASE | missing
+  assimilate search WORD        search the AUR and Arch by name and description
+  assimilate outdated           assimilated packages with a newer recipe (one name per line)
+
+Where a dependency's answer comes from, in order:
+  1. names.tsv: Arch names Slackware spells differently, and things every Iskra system has
+  2. a Slackware package of the same name, installed or in one of slpkg's repositories
+  3. the files: the Slackware package (installed or in a repository) holding the same libraries,
+     programs and pkg-config files as Arch's package
+  4. Arch's own recipe for it, then the AUR's, converted and built in turn
+Nothing here runs a recipe: the SlackBuild it writes does that, as an ordinary user, under fakeroot.
+"""
+import gzip, io, json, os, re, shutil, subprocess, sys, tarfile, tomllib, urllib.parse, urllib.request
+from pathlib import Path
+
+LIB = Path(os.environ.get('SPARKPKG_LIB', '/usr/lib/sparkpkg'))
+SHARE = Path(os.environ.get('SPARKPKG_SHARE', '/usr/share/sparkpkg'))
+ROOT = Path(os.environ.get('SPARKPKG_ROOT', '/'))
+STATE = Path(os.environ.get('SPARKPKG_STATE', '/var/lib/sparkpkg'))
+SLPKG_ETC = ROOT / 'etc/slpkg'
+SLPKG_REPOS = ROOT / 'var/lib/slpkg/repos'
+PKGDB = ROOT / 'var/lib/pkgtools/packages'
+AUR = 'https://aur.archlinux.org'
+ARCHWEB = 'https://archlinux.org'
+ARCHGIT = 'https://gitlab.archlinux.org/archlinux/packaging/packages'
+UA = {'User-Agent': 'sparkpkg (Iskra Linux)'}
+
+
+def say(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+def get(url, binary=False):
+    with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
+        data = r.read()
+    return data if binary else data.decode('utf-8', 'replace')
+
+
+def get_json(url):
+    return json.loads(get(url))
+
+
+def bare(dep):
+    """'gtk3>=3.24' -> 'gtk3';  'libfoo.so=1-64' -> 'libfoo.so'"""
+    return re.split(r'[<>=]', dep.strip(), maxsplit=1)[0].strip()
+
+
+# ---------------------------------------------------------------- what Slackware has
+
+class Slackware:
+    def __init__(self):
+        self.names = {}             # lower-case name -> (name, where): 'installed' or a repo name
+        self.repos = self._repo_order()
+        for repo in reversed(self.repos):       # the first in priority order wins
+            f = SLPKG_REPOS / repo / 'data.json'
+            if f.is_file():
+                for n in json.loads(f.read_text()):
+                    self.names[n.lower()] = (n, repo)
+        self.installed = {}
+        if PKGDB.is_dir():
+            for f in PKGDB.iterdir():
+                n = f.name.rsplit('-', 3)[0]
+                self.installed[n.lower()] = n
+                self.names[n.lower()] = (n, 'installed')
+        self._files = None
+
+    @staticmethod
+    def _repo_order():
+        try:
+            cfg = tomllib.loads((SLPKG_ETC / 'repositories.toml').read_text())
+            return [r.lower() for r in cfg.get('ALL_REPOS', {}).get('PRIORITY', [])]
+        except (OSError, tomllib.TOMLDecodeError):
+            return []
+
+    def name(self, n):
+        return self.names.get(n.lower())
+
+    def files(self):
+        """path -> package name, for every installed package and every repository's MANIFEST."""
+        if self._files is None:
+            say('    (reading the file lists of Slackware\'s packages, once)')
+            idx = {}
+            for repo in reversed(self.repos):
+                f = SLPKG_REPOS / repo / 'filelist.json.gz'
+                if not f.is_file():
+                    continue
+                with gzip.open(f, 'rt', encoding='utf-8', errors='replace') as fh:
+                    for pkg, paths in json.load(fh).items():
+                        n = Path(pkg).name.rsplit('-', 3)[0]
+                        for p in paths:
+                            put(idx, p.split()[-1].lstrip('./'), (n, repo))
+            if PKGDB.is_dir():
+                for f in PKGDB.iterdir():
+                    n = f.name.rsplit('-', 3)[0]
+                    lines = f.read_text(errors='replace').split('FILE LIST:', 1)[-1].split()
+                    for p in lines:
+                        put(idx, p.lstrip('./'), (n, 'installed'))
+            self._files = idx
+        return self._files
+
+
+def put(idx, path, owner):
+    """Record a file's owner. Slackware's aaa_ bundles hold spare copies of libraries that belong
+    to real packages; the real package is the answer, so an aaa_ owner never replaces another."""
+    old = idx.get(path)
+    if old is None or (old[0].startswith('aaa_') and not owner[0].startswith('aaa_')) or \
+            not owner[0].startswith('aaa_'):
+        idx[path] = owner
+
+
+def slackware_paths(arch_path):
+    """Where Slackware keeps what Arch puts at arch_path (Slackware64: libraries in lib64)."""
+    p = arch_path.lstrip('/')
+    out = []
+    for a, b in (('usr/lib/', 'usr/lib64/'), ('usr/lib/', 'lib64/'), ('usr/bin/', 'bin/'),
+                 ('usr/bin/', 'usr/sbin/'), ('usr/bin/', 'sbin/'), ('usr/share/man/', 'usr/man/')):
+        if p.startswith(a):
+            out.append(b + p[len(a):])
+    return out + [p]      # Slackware64's own folders first: its usr/lib holds 32-bit libraries
+
+
+KEY_FILE = re.compile(r'^usr/(lib/lib[^/]+\.so\.[0-9][^/]*|lib/pkgconfig/[^/]+\.pc|share/pkgconfig/[^/]+\.pc'
+                      r'|bin/[^/]+|lib/girepository-1\.0/[^/]+\.typelib)$')
+
+
+# ---------------------------------------------------------------- what Arch and the AUR have
+
+class Arch:
+    def __init__(self):
+        self._official, self._aur = {}, {}
+
+    def official(self, name):
+        """Arch's own package NAME (or one providing it): its search entry, or None."""
+        if name not in self._official:
+            hit = None
+            try:
+                r = get_json(f'{ARCHWEB}/packages/search/json/?name={urllib.parse.quote(name)}')['results']
+                r = [x for x in r if x['arch'] in ('x86_64', 'any') and not x['repo'].endswith('testing')]
+                hit = r[0] if r else None
+            except OSError:
+                pass
+            self._official[name] = hit
+        return self._official[name]
+
+    def files(self, entry):
+        try:
+            u = f"{ARCHWEB}/packages/{entry['repo']}/{entry['arch']}/{entry['pkgname']}/files/json/"
+            return get_json(u).get('files', [])
+        except OSError:
+            return []
+
+    def aur(self, *names):
+        want = [n for n in names if n not in self._aur]
+        for i in range(0, len(want), 100):
+            q = '&'.join('arg[]=' + urllib.parse.quote(n) for n in want[i:i + 100])
+            try:
+                res = get_json(f'{AUR}/rpc/v5/info?{q}')['results']
+            except OSError:
+                res = []
+            for n in want[i:i + 100]:
+                self._aur[n] = None
+            for r in res:
+                self._aur[r['Name']] = r
+        return self._aur.get(names[0]) if len(names) == 1 else None
+
+    def aur_provider(self, name):
+        """An AUR package that provides NAME, when none is called that."""
+        try:
+            res = get_json(f'{AUR}/rpc/v5/search/{urllib.parse.quote(name)}?by=provides')['results']
+        except OSError:
+            return None
+        res.sort(key=lambda r: (-(r.get('NumVotes') or 0)))
+        return res[0]['Name'] if res else None
+
+
+# ---------------------------------------------------------------- answering dependencies
+
+def load_names():
+    table = {}
+    for f in (SHARE / 'names.tsv', ROOT / 'etc/sparkpkg/names.tsv'):
+        if f.is_file():
+            for line in f.read_text().splitlines():
+                line = line.split('#', 1)[0].split()
+                if len(line) >= 2:
+                    table[line[0]] = line[1]
+    return table
+
+
+class Resolver:
+    def __init__(self):
+        self.slack = Slackware()
+        self.arch = Arch()
+        self.names = load_names()
+        self.cache = {}
+
+    def resolve(self, dep):
+        """-> ('base', None) | ('slackware', pkg, where) | ('arch', pkgname, pkgbase) | ('aur', pkgname, pkgbase)
+              | ('missing', reason)"""
+        name = bare(dep)
+        if name in self.cache:
+            return self.cache[name]
+        ans = self._resolve(name)
+        self.cache[name] = ans
+        return ans
+
+    def _resolve(self, name):
+        if name in self.names:
+            to = self.names[name]
+            if to == '-':
+                return ('base', None)
+            hit = self.slack.name(to)
+            if hit:
+                return ('slackware', hit[0], hit[1])
+        for n in self._spellings(name):
+            hit = self.slack.name(n)
+            if hit:
+                return ('slackware', hit[0], hit[1])
+        if name.endswith('.so') or '.so.' in name:          # a library, asked for by its file name
+            for p, (pkg, where) in self.slack.files().items():
+                if re.search(r'(^|/)lib(64)?/' + re.escape(name) + r'(\.|$)', p):
+                    return ('slackware', pkg, where)
+        entry = self.arch.official(name)
+        if entry:
+            hit = self._by_files(entry)
+            if hit:
+                return ('slackware',) + hit
+            return ('arch', entry['pkgname'], entry['pkgbase'])
+        r = self.arch.aur(name)
+        if not r:
+            prov = self.arch.aur_provider(name)
+            r = self.arch.aur(prov) if prov else None
+        if r:
+            return ('aur', r['Name'], r['PackageBase'])
+        return ('missing', f'nothing in Slackware, Arch or the AUR is called or provides "{name}"')
+
+    @staticmethod
+    def _spellings(n):
+        out = [n]
+        if n.startswith('python-'):
+            out += ['python3-' + n[7:], n[7:]]
+        if n.startswith('ttf-') or n.startswith('otf-'):
+            out += [n[4:] + '-fonts-ttf', n[4:] + '-ttf']
+        if n.startswith('lib32-'):                      # AlienBOB's multilib: foo-compat32
+            out += [n[6:] + '-compat32']
+        if n.endswith('-git'):
+            out += [n[:-4]]
+        out += [n.replace('gtk', 'gtk+', 1)] if re.match(r'^gtk[234]$', n) else []
+        return out
+
+    def _by_files(self, entry):
+        keys = [p for p in self.arch.files(entry) if KEY_FILE.match(p.lstrip('/'))]
+        if not keys:
+            return None
+        idx = self.slack.files()
+        votes = {}
+        want32 = entry['pkgname'].startswith('lib32-')
+        for p in keys:
+            for sp in slackware_paths(p):
+                hit = idx.get(sp)
+                if hit and hit[0].endswith('-compat32') != want32:    # 32-bit only for lib32-
+                    continue
+                if hit:
+                    votes[hit] = votes.get(hit, 0) + 1
+                    break
+        if not votes:
+            return None
+        best, n = max(votes.items(), key=lambda kv: kv[1])
+        return best if n * 3 >= len(keys) or n >= 3 else None      # most of its files, not a stray one
+
+
+# ---------------------------------------------------------------- recipes
+
+def srcinfo(text):
+    """.SRCINFO -> {'pkgbase': {...}, 'packages': {name: {...}}}, values as lists."""
+    base, pkgs, cur = {}, {}, None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or ' = ' not in line:
+            continue
+        k, v = line.split(' = ', 1)
+        if k == 'pkgbase':
+            cur = base
+        elif k == 'pkgname':
+            cur = pkgs.setdefault(v, {})
+            continue
+        cur.setdefault(k, []).append(v)
+    return {'pkgbase': base, 'packages': pkgs}
+
+
+def field(info, pkg, key, arch=True):
+    """A field for one split package: its own value if it sets one, else the base's."""
+    p, b = info['packages'].get(pkg, {}), info['pkgbase']
+    keys = [key, f'{key}_x86_64'] if arch else [key]
+    out = []
+    for k in keys:
+        out += p[k] if k in p else b.get(k, [])
+    return out
+
+
+def fetch(kind, base, dest):
+    """Download a recipe (kind 'arch' or 'aur') into dest/base; returns that folder."""
+    url = (f'{ARCHGIT}/{urllib.parse.quote(base)}/-/archive/main/{urllib.parse.quote(base)}-main.tar.gz'
+           if kind == 'arch' else f'{AUR}/cgit/aur.git/snapshot/{urllib.parse.quote(base)}.tar.gz')
+    data = get(url, binary=True)
+    out = dest / base
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+        for m in t.getmembers():
+            parts = Path(m.name).parts[1:]
+            if not parts or m.issym() or m.islnk() or '..' in parts:
+                continue
+            target = out.joinpath(*parts)
+            if m.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif m.isfile():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(t.extractfile(m).read())
+    if not (out / 'PKGBUILD').is_file():
+        raise SystemExit(f'sparkpkg: {base}: the download has no PKGBUILD ({url})')
+    if not (out / '.SRCINFO').is_file():
+        raise SystemExit(f'sparkpkg: {base}: the recipe has no .SRCINFO, so its needs can\'t be read safely')
+    (out / '.sparkpkg-source').write_text(f'{kind} {url}\n')
+    return out
+
+
+SLACKBUILD = '''#!/bin/bash
+# {base}.SlackBuild: made by sparkpkg from {where}'s recipe
+#   {url}
+# The PKGBUILD beside this file is the recipe, unchanged. /usr/lib/sparkpkg/pkgbuild.sh runs it
+# the way Arch's makepkg would (as an ordinary user, under fakeroot), then makes Slackware
+# packages of it with makepkg. Run this as root:  sh {base}.SlackBuild
+set -e
+cd "$(dirname "$0")"
+PKGBASE={base}
+PACKAGES="{packages}"
+TAG=${{TAG:-{tag}}}
+OUTPUT=${{OUTPUT:-/var/cache/sparkpkg/packages}}
+. /usr/lib/sparkpkg/pkgbuild.sh
+sparkpkg_build
+'''
+
+
+def make(kind, base, pkgs, dest):
+    d = fetch(kind, base, dest)
+    info = srcinfo((d / '.SRCINFO').read_text())
+    names = pkgs or list(info['packages'])
+    url = (d / '.sparkpkg-source').read_text().split()[1]
+    (d / f'{base}.SlackBuild').write_text(SLACKBUILD.format(
+        base=base, where={'arch': 'Arch Linux', 'aur': 'the AUR'}[kind], url=url,
+        packages=' '.join(names), tag={'arch': '_arch', 'aur': '_aur'}[kind]))
+    (d / f'{base}.SlackBuild').chmod(0o755)
+    return d, info, names
+
+
+# ---------------------------------------------------------------- planning
+
+def plan(targets, res, dest):
+    """Depth first: every recipe after the recipes it needs. Returns the plan as a dict."""
+    slack, recipes, missing, order, seen = {}, {}, [], [], set()
+
+    def need(dep, why, build_only):
+        a = res.resolve(dep)
+        if a[0] == 'base':
+            return
+        if a[0] == 'slackware':
+            if a[2] != 'installed':
+                slack.setdefault(a[1], {'repo': a[2], 'for': [], 'build_only': True})
+                slack[a[1]]['for'].append(why)
+                slack[a[1]]['build_only'] &= build_only
+            return
+        if a[0] == 'missing':
+            missing.append({'dependency': dep, 'for': why, 'reason': a[1]})
+            return
+        visit(a[0], a[2], a[1])
+
+    def visit(kind, base, pkg):
+        key = (kind, base)
+        if key in recipes:
+            r = recipes[key]
+            if pkg and pkg not in r['packages']:        # another of the same recipe's split packages
+                r['packages'].append(pkg)
+                for dep in field(r['_info'], pkg, 'depends'):
+                    if bare(dep) not in r['packages']:
+                        need(dep, pkg, False)
+            return
+        if key in seen:
+            return
+        seen.add(key)
+        say(f'  reading {kind} recipe {base}')
+        d, info, names = make(kind, base, [pkg] if pkg else [], dest)
+        names = [pkg] if pkg else names
+        ver = info['pkgbase'].get('pkgver', ['?'])[0] + '-' + info['pkgbase'].get('pkgrel', ['1'])[0]
+        for dep in field(info, None, 'makedepends') + field(info, None, 'checkdepends'):
+            need(dep, base, True)
+        provided = set(names)
+        for n in names:
+            for dep in field(info, n, 'depends'):
+                if bare(dep) not in provided:
+                    need(dep, n, False)
+        recipes[key] = {'kind': kind, 'base': base, 'packages': names, 'version': ver,
+                        'folder': str(d), 'description': field(info, names[0], 'pkgdesc', False)[:1],
+                        'arch': field(info, names[0], 'arch', False), '_info': info}
+        order.append(key)
+
+    for t in targets:
+        a = res.resolve(t)
+        if a[0] in ('arch', 'aur'):
+            visit(a[0], a[2], a[1])
+        elif a[0] == 'slackware':
+            say(f'  {t}: Slackware has it ({a[1]}, {a[2]}); use  sparkpkg install {a[1]}')
+        else:
+            missing.append({'dependency': t, 'for': t, 'reason': a[1] if len(a) > 1 else 'unknown'})
+    out = []
+    for k in order:                   # each SlackBuild builds every split package the plan wants
+        r = recipes.pop(k)
+        r.pop('_info')
+        sb = Path(r['folder']) / f"{r['base']}.SlackBuild"
+        sb.write_text(re.sub(r'(?m)^PACKAGES=.*$', f'PACKAGES="{" ".join(r["packages"])}"', sb.read_text()))
+        out.append(r)
+    return {'slackware': slack, 'recipes': out, 'missing': missing}
+
+
+
+# ---------------------------------------------------------------- building and installing
+
+def ask(question, default=True, yes=False):
+    if yes or not sys.stdin.isatty():
+        return default
+    a = input(f'{question} [{"Y/n" if default else "y/N"}] ').strip().lower()
+    return default if not a else a.startswith('y')
+
+
+def show_plan(p):
+    if p['missing']:
+        say('\nsparkpkg can\'t find everything this needs:')
+        for m in p['missing']:
+            say(f"  {m['dependency']} (for {m['for']}): {m['reason']}")
+        say('If Slackware has it under another name, add a line to /etc/sparkpkg/names.tsv:'
+            '\n  <Arch name>   <Slackware name>')
+        return False
+    if p['slackware']:
+        say('\nFrom Slackware\'s repositories first:')
+        for n, v in sorted(p['slackware'].items()):
+            say(f"  {n:<28} {v['repo']:<12} {'(only to build)' if v['build_only'] else ''}")
+    say('\nThen converted and built here, in this order:')
+    for r in p['recipes']:
+        desc = (r['description'] or [''])[0]
+        say(f"  {r['base']:<28} {r['version']:<16} {r['kind']:<5} {desc[:50]}")
+    return True
+
+
+def run(targets, from_=None, yes=False):
+    if os.geteuid() != 0:
+        raise SystemExit('sparkpkg: this installs packages, so it needs root:  sudo sparkpkg ...')
+    res = Resolver()
+    if from_:
+        force(res, targets, from_)
+    say('==> Working out what is needed')
+    p = plan(targets, res, STATE / 'recipes')
+    if not p['recipes'] and not p['missing']:
+        return 0
+    if not show_plan(p):
+        return 1
+    if not ask('\nGo ahead?', True, yes):
+        return 1
+    if p['slackware']:
+        say('\n==> Installing what Slackware has, with slpkg')
+        subprocess.run(['slpkg', 'install', '-o', 'all', '-y', *sorted(p['slackware'])], check=True)
+    built_all = []
+    for r in p['recipes']:
+        folder = Path(r['folder'])
+        if r['kind'] == 'aur' and not yes and sys.stdin.isatty():
+            say(f"\n{r['base']} comes from the AUR, where anyone can upload a recipe.")
+            if ask(f"Read its PKGBUILD first?", True):
+                subprocess.run([os.environ.get('PAGER', 'less'), str(folder / 'PKGBUILD')])
+            if not ask(f"Build {r['base']}?", True):
+                return 1
+        say(f"\n==> Building {r['base']} {r['version']}")
+        proc = subprocess.Popen(['sh', str(folder / f"{r['base']}.SlackBuild")], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+        files = []
+        for l in proc.stdout:                     # the build, shown as it happens
+            l = l.rstrip('\n')
+            if l.startswith('/') and l.endswith(('.txz', '.tgz')):
+                files.append(l)
+            else:
+                print(l, flush=True)
+        if proc.wait() or not files:
+            raise SystemExit(f"sparkpkg: {r['base']} did not build; its recipe is in {folder}")
+        say(f"==> Installing {', '.join(Path(f).name for f in files)}")
+        subprocess.run(['slpkg', 'install-pkg', '-y', *files], check=True)
+        rec = STATE / 'installed'
+        rec.mkdir(parents=True, exist_ok=True)
+        for n in r['packages']:
+            (rec / f'{n}.json').write_text(json.dumps({**r, 'name': n, 'files': files}, indent=2))
+        built_all += files
+    tools = [n for n, v in p['slackware'].items() if v['build_only']]
+    if tools:
+        say(f"\nThese were only needed to build: {' '.join(sorted(tools))}")
+        if ask('Remove them now?', False, yes):
+            subprocess.run(['slpkg', 'remove', '-y', *sorted(tools)])
+    say(f"\nDone: {len(built_all)} package{'s' if len(built_all) != 1 else ''} built and installed. "
+        "sparkpkg undo  takes them out again.")
+    return 0
+
+
+def force(res, targets, from_):
+    for t in targets:
+        if from_ == 'aur':
+            r = res.arch.aur(t)
+            res.cache[t] = ('aur', r['Name'], r['PackageBase']) if r else ('missing', f'the AUR has no "{t}"')
+        else:
+            e = res.arch.official(t)
+            res.cache[t] = ('arch', e['pkgname'], e['pkgbase']) if e else ('missing', f'Arch has no "{t}"')
+
+
+def outdated():
+    rec = STATE / 'installed'
+    if not rec.is_dir():
+        return []
+    a, old = Arch(), []
+    here = {f.name for f in PKGDB.iterdir()} if PKGDB.is_dir() else set()
+    recs = []
+    for f in sorted(rec.glob('*.json')):          # only what is still installed (not undone or removed)
+        r = json.loads(f.read_text())
+        tag = '_aur' if r['kind'] == 'aur' else '_arch'
+        if any(h.startswith(r['name'] + '-') and h.endswith(tag) and h.count('-') - r['name'].count('-') == 3
+               for h in here):
+            recs.append(r)
+    a.aur(*[r['name'] for r in recs if r['kind'] == 'aur'] or ['-'])
+    for r in recs:
+        if r['kind'] == 'aur':
+            x = a.aur(r['name'])
+            now = x['Version'] if x else None
+        else:
+            e = a.official(r['name'])
+            now = f"{e['pkgver']}-{e['pkgrel']}" if e else None
+        if now and now.split(':')[-1] != r['version']:
+            old.append((r['name'], r['kind'], r['version'], now))
+    return old
+
+
+def search(word):
+    out = []
+    try:
+        for x in get_json(f'{AUR}/rpc/v5/search/{urllib.parse.quote(word)}?by=name-desc')['results']:
+            out.append(('aur', x['Name'], x['Version'], x.get('Description') or '', x.get('NumVotes') or 0))
+    except OSError:
+        pass
+    try:
+        for x in get_json(f'{ARCHWEB}/packages/search/json/?q={urllib.parse.quote(word)}')['results']:
+            if x['arch'] in ('x86_64', 'any'):
+                out.append(('arch', x['pkgname'], f"{x['pkgver']}-{x['pkgrel']}", x['pkgdesc'], 10 ** 6))
+    except OSError:
+        pass
+    seen = set()
+    for kind, n, v, d, votes in sorted(out, key=lambda o: -o[4]):
+        if (kind, n) in seen:
+            continue
+        seen.add((kind, n))
+        print(f'{kind:<5} {n:<32} {v:<18} {d[:70]}')
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help', 'help'):
+        print(__doc__.strip()); return 0
+    cmd, args = argv[0], argv[1:]
+    dest = STATE / 'recipes'
+    if cmd == 'plan':
+        res = Resolver()
+        if os.environ.get('SPARKPKG_FROM'):          # 'aur' or 'arch': where the targets come from
+            force(res, args, os.environ['SPARKPKG_FROM'])
+        print(json.dumps(plan(args, res, dest), indent=2))
+    elif cmd == 'resolve':
+        res = Resolver()
+        for d in args:
+            a = res.resolve(d)
+            print(f'{d:<28} ' + {'base': lambda: 'part of every Iskra system',
+                                 'slackware': lambda: f'Slackware package {a[1]} ({a[2]})',
+                                 'arch': lambda: f'Arch recipe {a[2]} (builds {a[1]})',
+                                 'aur': lambda: f'AUR recipe {a[2]} (builds {a[1]})',
+                                 'missing': lambda: 'not found: ' + a[1]}[a[0]]())
+    elif cmd == 'make':
+        res = Resolver()
+        for t in args:
+            a = res.resolve(t)
+            if a[0] not in ('arch', 'aur'):
+                raise SystemExit(f'sparkpkg: {t}: ' + (a[1] if a[0] == 'missing' else
+                                 f'Slackware already has it ({a[1]}); use  sparkpkg install {a[1]}'))
+            print(make(a[0], a[2], [a[1]], dest)[0])
+    elif cmd == 'info':
+        a = Arch()
+        for t in args:
+            e, r = a.official(t), a.aur(t)
+            print(f'{t}:')
+            print(f"  Arch: {e['repo']}/{e['pkgname']} {e['pkgver']}-{e['pkgrel']}  {e['pkgdesc']}" if e else '  Arch: no')
+            print(f"  AUR:  {r['Name']} {r['Version']}  {r.get('Description') or ''}"
+                  f"{'  (OUT OF DATE)' if r.get('OutOfDate') else ''}" if r else '  AUR:  no')
+    elif cmd == 'run':
+        yes = '-y' in args or '--yes' in args
+        names = [a for a in args if a not in ('-y', '--yes')]
+        return run(names, os.environ.get('SPARKPKG_FROM'), yes)
+    elif cmd == 'where':
+        a = Resolver().resolve(args[0])
+        print(' '.join(str(x) for x in a if x is not None))
+    elif cmd == 'search':
+        search(' '.join(args))
+    elif cmd == 'outdated':
+        for n, kind, was, now in outdated():
+            print(f'{n} {kind} {was} {now}')
+    else:
+        raise SystemExit(f'assimilate: unknown command {cmd} (try: assimilate help)')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

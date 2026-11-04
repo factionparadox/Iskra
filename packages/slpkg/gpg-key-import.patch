@@ -1,0 +1,44 @@
+diff -ru slpkg-a/slpkg-6.1.7/slpkg/config.py slpkg-b/slpkg-6.1.7/slpkg/config.py
+--- slpkg-a/slpkg-6.1.7/slpkg/config.py	2026-09-30 17:30:12.000000000 +0100
++++ slpkg-b/slpkg-6.1.7/slpkg/config.py	2026-11-04 03:34:20.744432034 +0000
+@@ -63,6 +63,7 @@
+         "COLORS": ("colors", (bool,)),
+         "MAKEFLAGS": ("makeflags", (str,)),
+         "GPG_VERIFICATION": ("gpg_verification", (bool,)),
++        "GPG_KEY_IMPORT": ("gpg_key_import", (bool,)),
+         "CHECKSUM_MD5": ("checksum_md5", (bool,)),
+         "VERIFY_SKIP_VIRTUAL": ("verify_skip_virtual", (list,)),
+         "VERIFY_SKIP_PREFIXES": ("verify_skip_prefixes", (list,)),
+@@ -175,6 +176,7 @@
+         self.colors: bool = True
+         self.makeflags: str = "-j4"
+         self.gpg_verification: bool = False
++        self.gpg_key_import: bool = True
+         self.checksum_md5: bool = True
+         self.verify_skip_virtual: list[str] = ["dev/", "proc/", "sys/", "run/"]
+         self.verify_skip_prefixes: list[str] = ["install/"]
+diff -ru slpkg-a/slpkg-6.1.7/slpkg/config_validate.py slpkg-b/slpkg-6.1.7/slpkg/config_validate.py
+--- slpkg-a/slpkg-6.1.7/slpkg/config_validate.py	2026-09-30 17:30:12.000000000 +0100
++++ slpkg-b/slpkg-6.1.7/slpkg/config_validate.py	2026-11-04 03:34:20.744806209 +0000
+@@ -66,6 +66,7 @@
+     },
+     "verification": {
+         "GPG_VERIFICATION": {"type": _BOOL},
++        "GPG_KEY_IMPORT": {"type": _BOOL},
+         "CHECKSUM_MD5": {"type": _BOOL},
+         "VERIFY_SKIP_VIRTUAL": {"type": _LIST},
+         "VERIFY_SKIP_PREFIXES": {"type": _LIST},
+diff -ru slpkg-a/slpkg-6.1.7/slpkg/update_repositories.py slpkg-b/slpkg-6.1.7/slpkg/update_repositories.py
+--- slpkg-a/slpkg-6.1.7/slpkg/update_repositories.py	2026-09-30 17:30:12.000000000 +0100
++++ slpkg-b/slpkg-6.1.7/slpkg/update_repositories.py	2026-11-04 03:34:20.746731608 +0000
+@@ -173,6 +173,10 @@
+             logger.info("GPG verification is disabled. Skipping GPG key import for repository: %s", repo)
+             return
+ 
++        if not config_load.gpg_key_import:
++            logger.info("GPG_KEY_IMPORT is off: the keys are managed outside slpkg. Skipping %s.", repo)
++            return
++
+         logger.debug("Attempting to import GPG key for repository: %s", repo)
+         mirror: str = self.repos.repositories[repo]["mirror_changelog"]
+ 

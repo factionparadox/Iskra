@@ -1,0 +1,138 @@
+#!/bin/bash
+# sparkpkg: Iskra's package manager. slpkg underneath (Slackware's packages, Iskra's, AlienBOB's,
+# conraid's and Ponce's SlackBuilds, with dependencies), and Arch and AUR recipes converted into
+# Slackware packages when no one has packaged something for Slackware.   sparkpkg help
+set -o pipefail
+LIB=/usr/lib/sparkpkg
+ME=${0##*/}
+
+die() { printf '%s: %s\n' "$ME" "$*" >&2; exit 1; }
+root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"; }
+
+keys() {   # import the trusted signing keys into root's keyring, checking each fingerprint
+  local name fpr rest f have
+  gpg --version >/dev/null 2>&1 || die "gpg isn't working, so package signatures can't be checked: $(gpg --version 2>&1 | head -n 1)"
+  have=$(gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '/^fpr/ { print $10 }')
+  while read -r name fpr rest; do
+    [[ -z $name || $name == \#* ]] && continue
+    grep -qx "$fpr" <<<"$have" && continue
+    f=/usr/share/sparkpkg/keys/$name.asc
+    [[ -f $f ]] || continue
+    gpg --batch --with-colons --import-options show-only --import "$f" 2>/dev/null |
+      awk -F: '/^fpr/ { print $10; exit }' | grep -qx "$fpr" || die "$f is not the key $fpr; not importing it"
+    gpg --batch --quiet --import "$f" 2>/dev/null && echo "    trusted $name's signing key $fpr"
+  done < /usr/share/sparkpkg/keys/FINGERPRINTS
+}
+
+where() { "$LIB/assimilate" where "$1" 2>/dev/null; }
+
+install_any() {   # Slackware's repositories first; anything they don't have, from Arch or the AUR
+  local yes=() names=() slack=() other=() n w
+  for n in "$@"; do [[ $n == -y || $n == --yes ]] && yes=(-y) || names+=("$n"); done
+  [[ ${#names[@]} -gt 0 ]] || die "install what?  $ME install NAME..."
+  for n in "${names[@]}"; do
+    w=$(where "$n")
+    case $w in
+      slackware\ *) slack+=("$(cut -d' ' -f2 <<<"$w")") ;;
+      arch\ *|aur\ *) other+=("$n") ;;
+      *) die "$n: nothing in Slackware's repositories, Arch or the AUR is called that (try: $ME search $n)" ;;
+    esac
+  done
+  if [[ ${#slack[@]} -gt 0 ]]; then slpkg install -o all "${yes[@]}" "${slack[@]}" || exit; fi
+  if [[ ${#other[@]} -gt 0 ]]; then
+    echo; echo "Not packaged for Slackware: ${other[*]}. sparkpkg will build them from Arch's or the AUR's recipes."
+    "$LIB/assimilate" run "${yes[@]}" "${other[@]}"
+  fi
+}
+
+upgrade_all() {
+  slpkg upgrade -o all "$@" || exit
+  local old; old=$("$LIB/assimilate" outdated) || return
+  [[ -n $old ]] || return 0
+  echo; echo "Newer recipes for packages sparkpkg built:"
+  awk '{ printf "  %-28s %-5s %s -> %s\n", $1, $2, $3, $4 }' <<<"$old"
+  local n kind
+  while read -r n kind _; do
+    SPARKPKG_FROM=$kind "$LIB/assimilate" run "$@" "$n" || exit
+  done <<<"$old"
+}
+
+tools() {
+cat <<'EOF'
+Slackware's own package tools (sparkpkg uses them; you can too):
+  installpkg FILE.txz      install a package file
+  upgradepkg FILE.txz      replace an installed package with this one (--install-new: or install it)
+  removepkg NAME           remove an installed package
+  makepkg FILE.txz         make a package from the current folder (run in a package's root)
+  explodepkg FILE.txz      unpack a package here, without installing it
+  pkgtool                  menus for the same
+  ls /var/lib/pkgtools/packages        every installed package; each file lists what it installed
+  sh NAME.SlackBuild       build a package from a SlackBuild (a recipe), into /tmp
+
+slpkg, underneath sparkpkg (every slpkg command works:  sparkpkg slpkg ...):
+  slpkg update / upgrade / install / remove / search / info / history / rollback / why / orphans
+
+sparkpkg's own:
+  /etc/slpkg/repositories.toml         which repositories, and in what order
+  /usr/share/sparkpkg/names.tsv        Arch names Slackware spells differently (add yours in
+  /etc/sparkpkg/names.tsv)
+  /var/lib/sparkpkg/recipes/NAME/      converted recipes: the PKGBUILD and NAME.SlackBuild
+  /var/cache/sparkpkg/packages/        the packages it built (installpkg can put them back)
+EOF
+}
+
+help() {
+cat <<EOF
+sparkpkg: Iskra's packages.
+
+  $ME install NAME...     install, with everything it needs. From Slackware and the repositories
+                          that build for it if they have it; if not, Arch's or the AUR's recipe
+                          is converted and built into a Slackware package
+  $ME remove NAME...      remove
+  $ME upgrade             bring everything up to date (packages sparkpkg built from recipes too)
+  $ME sync                fetch the repositories' latest package lists (upgrade does it too)
+  $ME search WORD         look in every repository, Arch and the AUR
+  $ME info NAME           what NAME is, and where it would come from
+  $ME undo                undo the last install, upgrade or removal
+  $ME history             what was installed, upgraded and removed, and when
+
+  $ME aur NAME...         build and install from the AUR, even if Slackware has a package
+  $ME arch NAME...        the same, from Arch Linux's own recipe
+  $ME convert NAME        only write NAME's SlackBuild (to read, change, or build later)
+  $ME why NAME            what needs NAME
+  $ME orphans             packages nothing needs any more
+  $ME tools               Slackware's package tools, and where sparkpkg keeps things
+  $ME slpkg ...           slpkg itself, with any of its options
+
+Add -y to say yes to every question. Most commands need root; sparkpkg asks for it (sudo).
+EOF
+}
+
+cmd=${1:-help}; shift 2>/dev/null
+case $cmd in
+  help|-h|--help) help ;;
+  tools)          tools ;;
+  sync|update)    root sync "$@"; keys; slpkg update "$@" ;;
+  install|i|add)  root install "$@"; keys; install_any "$@" ;;
+  remove|rm|del)  root remove "$@"; slpkg remove "$@" ;;
+  upgrade|up)     root upgrade "$@"; keys; slpkg update && upgrade_all "$@" ;;
+  search|s)       [[ $# -gt 0 ]] || die "search for what?"
+                  echo "== Slackware and its repositories"; slpkg search -o all "$@"
+                  echo; echo "== Arch and the AUR (sparkpkg can build these)"; "$LIB/assimilate" search "$@" ;;
+  info)           [[ $# -gt 0 ]] || die "info about what?"
+                  for n; do
+                    case $(where "$n") in
+                      slackware\ *) slpkg info -o all "$n" ;;
+                      *) "$LIB/assimilate" info "$n" ;;
+                    esac
+                  done ;;
+  undo|rollback)  root undo "$@"; slpkg rollback "$@" ;;
+  history)        slpkg history "$@" ;;
+  aur)            root aur "$@"; keys; SPARKPKG_FROM=aur "$LIB/assimilate" run "$@" ;;
+  arch)           root arch "$@"; keys; SPARKPKG_FROM=arch "$LIB/assimilate" run "$@" ;;
+  convert)        root convert "$@"; "$LIB/assimilate" make "$@" ;;
+  why)            slpkg why "$@" ;;
+  orphans)        slpkg orphans "$@" ;;
+  slpkg)          slpkg "$@" ;;
+  *)              die "unknown command: $cmd (try: $ME help)" ;;
+esac

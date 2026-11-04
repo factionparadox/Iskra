@@ -19,9 +19,7 @@ on() {
 	for f in $FILES; do
 		[ -f "$f" ] || continue
 		grep -q pam_fprintd "$f" || { printf '%s\n' "$LINE" | cat - "$f" > "$f.new" && mv "$f.new" "$f"; }
-		# CRUX's upgrades of sudo and polkit leave the file alone
-		grep -q "${f#/}" /etc/pkgadd.conf 2>/dev/null ||
-			printf 'UPGRADE\t^%s$\tNO\n' "${f#/}" >> /etc/pkgadd.conf
+		# Slackware's upgrades of sudo and polkit keep this file: theirs arrives beside it as .new
 	done
 	echo "Fingerprint is on for sudo. Try it: sudo true"
 }
