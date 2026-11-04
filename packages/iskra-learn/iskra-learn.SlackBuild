@@ -1,0 +1,14 @@
+#!/bin/bash
+# iskra-learn.SlackBuild: Iskra's SlackBuild for iskra-learn, made from this repository's own files.
+# Run in this folder, as root (build/build-packages provides iskra-source.tar.gz).
+PRGNAM=iskra-learn
+. ../lib.sh
+cd $TMP; rm -rf iskra-source; mkdir iskra-source
+tar xf $CWD/iskra-source.tar.gz -C iskra-source
+cd iskra-source
+install -Dm755 learn/iskra-learn $PKG/usr/bin/iskra-learn
+install -d $PKG/usr/share/iskra/learn
+cp -a learn/topics learn/wiki $PKG/usr/share/iskra/learn/
+chown -R root:root $PKG
+cd $PKG; slackdesc
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-noarch-$BUILD$TAG.$PKGTYPE"

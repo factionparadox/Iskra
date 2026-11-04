@@ -1,0 +1,7 @@
+PRGNAM="iskra"
+VERSION="@ISKRA@"
+HOMEPAGE="https://github.com/factionparadox/iskra"
+DOWNLOAD=""
+SHA256SUM=""
+REQUIRES="iskra-desktop iskra-learn iskra-russian sparkpkg thermald intel-lpmd tlp framework-tool chrony udiskie pulsemixer bluetuith zathura zathura-pdf-mupdf freetube webcord-bin proton-vpn-gtk-app ani-cli steamclient hunspell-en font-ipaex noto-emoji neovim fzf aria2"
+MAINTAINER="Iskra"

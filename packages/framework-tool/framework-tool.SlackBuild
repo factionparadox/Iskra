@@ -1,0 +1,6 @@
+#!/bin/bash
+# framework-tool.SlackBuild: Iskra's SlackBuild for framework-tool. Run in this folder, as root.
+PRGNAM=framework-tool
+. ../lib.sh
+install -Dm755 $CWD/framework_tool $PKG/usr/bin/framework_tool
+finish

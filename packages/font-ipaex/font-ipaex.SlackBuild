@@ -1,0 +1,10 @@
+#!/bin/bash
+# font-ipaex.SlackBuild: Iskra's SlackBuild for font-ipaex. Run in this folder, as root.
+PRGNAM=font-ipaex
+ARCH=noarch
+. ../lib.sh
+cd $TMP; rm -rf IPAexfont00401; unzip -q $CWD/IPAexfont00401.zip
+install -d $PKG/usr/share/fonts/TTF $PKG/usr/doc/$PRGNAM-$VERSION
+install -m644 IPAexfont00401/*.ttf $PKG/usr/share/fonts/TTF/
+install -m644 IPAexfont00401/*.txt $PKG/usr/doc/$PRGNAM-$VERSION/
+finish

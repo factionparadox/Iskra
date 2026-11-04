@@ -15,6 +15,10 @@ if [ "${1:-}" = --dry ]; then
 	exit 0
 fi
 sparkpkg upgrade
+# an upgrade of Slackware's aaa_base brings back Slackware's name; this is Iskra
+if [ -f /usr/share/iskra/os-release ] && ! cmp -s /usr/share/iskra/os-release /etc/os-release; then
+	cp /usr/share/iskra/os-release /etc/os-release
+fi
 echo
 echo "==> The Slackware book, for reading offline"
 iskra-handbook update || true

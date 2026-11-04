@@ -1,0 +1,8 @@
+PRGNAM="x-terminal"
+VERSION="0.9.3"
+HOMEPAGE="https://github.com/bakkeby/st-flexipatch"
+DOWNLOAD="git+https://github.com/bakkeby/st-flexipatch.git#commit=9c733c4b78bf3a145f25a737beac38c52ad63b76"
+SHA256SUM="SKIP"
+REQUIRES="font-go"
+BUILD_REQUIRES=""
+MAINTAINER="Iskra"

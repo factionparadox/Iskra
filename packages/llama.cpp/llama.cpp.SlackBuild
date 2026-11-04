@@ -1,0 +1,19 @@
+#!/bin/bash
+# llama.cpp.SlackBuild: Iskra's SlackBuild for llama.cpp. Run in this folder, as root.
+PRGNAM=llama.cpp
+. ../lib.sh
+SRC=llama.cpp-8642541b255bfb5dc39cd351a178be09013a55d6
+cd $TMP; rm -rf $SRC llama-b11960; tar xf $CWD/$SRC.tar.gz; tar xf $CWD/llama-b11960-ui.tar.gz
+# the server's web pages: llama.cpp publishes them built, beside the release
+mkdir -p $SRC/tools/ui; rm -rf $SRC/tools/ui/dist; mv llama-b11960 $SRC/tools/ui/dist
+# Built in CI, so not tuned to CI's processor (GGML_NATIVE off): every variant is built, and the
+# best for the laptop's processor is picked when it runs.
+cmake -S $SRC -B build -G Ninja \
+  -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS="$SLKCFLAGS" -DCMAKE_CXX_FLAGS="$SLKCFLAGS" \
+  -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_VULKAN=ON \
+  -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON
+cmake --build build
+DESTDIR=$PKG cmake --install build
+mkdir -p $PKG/usr/doc/$PRGNAM-$VERSION; cp $SRC/LICENSE $SRC/README.md $PKG/usr/doc/$PRGNAM-$VERSION/
+finish

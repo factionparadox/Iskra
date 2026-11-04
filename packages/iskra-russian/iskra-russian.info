@@ -1,0 +1,7 @@
+PRGNAM="iskra-russian"
+VERSION="@ISKRA@"
+HOMEPAGE="https://github.com/factionparadox/iskra"
+DOWNLOAD="iskra-source"
+SHA256SUM=""
+REQUIRES="python3 llama.cpp piper-tts mpv yt-dlp kiwix-tools hunspell-russian-aot"
+MAINTAINER="Iskra"

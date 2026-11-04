@@ -1,0 +1,7 @@
+PRGNAM="iskra-learn"
+VERSION="@ISKRA@"
+HOMEPAGE="https://github.com/factionparadox/iskra"
+DOWNLOAD="iskra-source"
+SHA256SUM=""
+REQUIRES="python3"
+MAINTAINER="Iskra"

@@ -38,7 +38,12 @@ install_any() {   # Slackware's repositories first; anything they don't have, fr
       *) die "$n: nothing in Slackware's repositories, Arch or the AUR is called that (try: $ME search $n)" ;;
     esac
   done
-  if [[ ${#slack[@]} -gt 0 ]]; then slpkg install -o all "${yes[@]}" "${slack[@]}" || exit; fi
+  if [[ ${#slack[@]} -gt 0 ]]; then
+    # slpkg follows requirements only within one repository; Iskra's packages need Slackware's,
+    # so sparkpkg works out the whole set across all of them
+    mapfile -t slack < <("$LIB/assimilate" expand "${slack[@]}")
+    slpkg install -o all "${yes[@]}" "${slack[@]}" || exit
+  fi
   if [[ ${#other[@]} -gt 0 ]]; then
     echo; echo "Not packaged for Slackware: ${other[*]}. sparkpkg will build them from Arch's or the AUR's recipes."
     "$LIB/assimilate" run "${yes[@]}" "${other[@]}"

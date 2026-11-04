@@ -1,0 +1,7 @@
+PRGNAM="sparkpkg"
+VERSION="@ISKRA@"
+HOMEPAGE="https://github.com/factionparadox/iskra"
+DOWNLOAD="iskra-source"
+SHA256SUM=""
+REQUIRES="slpkg fakeroot"
+MAINTAINER="Iskra"

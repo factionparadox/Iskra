@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""Build Iskra's packages (packages/LIST) inside a Slackware -current system, ready-made.
+
+  sudo build/build-packages ROOT OUT [NAME...]     default: everything in packages/LIST, in order
+
+ROOT is a Slackware -current system in a folder (build/slackware-root makes one; build/ci-root
+adds slpkg, fakeroot, sparkpkg and the network to it). Packages are built in it with chroot,
+installed in it as they're made (so later ones can use them), and copied to OUT, with
+OUT/requires.json saying what each one needs, for build/make-repo. A package already in OUT at
+the same version is not built again.
+
+Each kind of entry in packages/LIST:
+  iskra:NAME   packages/NAME: NAME.info (VERSION, DOWNLOAD, SHA256SUM, REQUIRES) and NAME.SlackBuild.
+               A DOWNLOAD of  git+URL#commit=HASH  is fetched with git, at exactly that commit.
+  ponce:PATH   Ponce's SlackBuild; its MD5SUMs are checked, and each thing it REQUIRES comes
+               ready-made from slpkg's repositories (under its own name or Slackware's spelling
+               of it) or else is built first from Ponce's SlackBuild too.
+  arch:NAME / aur:NAME   sparkpkg arch|aur -y NAME, inside ROOT.
+"""
+import hashlib, json, os, re, shutil, subprocess, sys, urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parents[1]
+PONCE_URL = 'https://github.com/Ponce/slackbuilds.git'
+ENV_KEEP = ('https_proxy', 'http_proxy', 'no_proxy', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO')
+
+
+def say(*a):
+    print('==>', *a, flush=True)
+
+
+class Builder:
+    def __init__(self, root, out):
+        self.root, self.out = Path(root), Path(out)
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.work = self.root / 'tmp/iskra-build'
+        self.reqfile = self.out / 'requires.json'
+        self.requires = json.loads(self.reqfile.read_text()) if self.reqfile.is_file() else {}
+        self.done = set()
+        self.keep = set()                                  # package files this run made or reused
+        self.statefile = self.out / 'built.json'           # name -> fingerprint of what it was made from
+        self.state = json.loads(self.statefile.read_text()) if self.statefile.is_file() else {}
+        self.ponce = self.root / 'var/lib/slpkg/repos/ponce'     # slpkg's own copy of Ponce's tree
+        self.ready = self._ready_made()
+
+    # ------------------------------------------------------------ running things in ROOT
+    def chroot(self, *cmd, check=True, capture=False):
+        env = {'HOME': '/root', 'TERM': 'dumb', 'LANG': 'C.UTF-8',
+               'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+               'MAKEFLAGS': f'-j{os.cpu_count()}'}
+        env.update({k: os.environ[k] for k in ENV_KEEP if k in os.environ})
+        args = ['chroot', str(self.root), 'env', '-i', *[f'{k}={v}' for k, v in env.items()], *cmd]
+        r = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else None, stdin=subprocess.DEVNULL)
+        if check and r.returncode:
+            raise SystemExit(f'build-packages: failed in {self.root}: {" ".join(cmd)}')
+        return r.stdout if capture else r.returncode
+
+    def installed(self, name):
+        db = self.root / 'var/lib/pkgtools/packages'
+        return any(f.name.rsplit('-', 3)[0] == name for f in db.iterdir())
+
+    def _ready_made(self):
+        """name -> repo, for every package the binary repositories have."""
+        names = {}
+        for repo in ('slack', 'slack_extra', 'alien', 'multilib', 'restricted', 'conraid'):
+            f = self.root / f'var/lib/slpkg/repos/{repo}/data.json'
+            if f.is_file():
+                for n in json.loads(f.read_text()):
+                    names.setdefault(n, repo)
+        return names
+
+    def ready_name(self, req):
+        """The ready-made package that answers a SlackBuilds.org-style requirement, or None."""
+        for n in (req, re.sub(r'^python3-', 'python-', req), re.sub(r'-bin$', '', req), req.lower()):
+            if n in self.ready:
+                return n
+        return None
+
+    # ------------------------------------------------------------ sources
+    def fetch(self, d, info):
+        """Download a SlackBuild's sources into its folder and check them."""
+        urls = (info.get('DOWNLOAD_x86_64') or info.get('DOWNLOAD', '')).split()
+        urls = [u for u in urls if u not in ('UNSUPPORTED', 'UNTESTED')]
+        sha = (info.get('SHA256SUM_x86_64') or info.get('SHA256SUM', '')).split()
+        md5 = (info.get('MD5SUM_x86_64') or info.get('MD5SUM', '')).split()
+        for i, u in enumerate(urls):
+            if u == 'iskra-source':                       # this repository's own files, as they are now
+                files = subprocess.run(['git', '-C', str(HERE), 'ls-files', '-z'], capture_output=True,
+                                       check=True).stdout.split(b'\0')
+                files = [f.decode() for f in files if f and (HERE / f.decode()).exists()]
+                subprocess.run(['tar', '-czf', str(d / 'iskra-source.tar.gz'), '-C', str(HERE), '--owner=0',
+                                '--group=0', '--null', '-T', '-'], input='\0'.join(files).encode(), check=True)
+                print(f'    iskra-source.tar.gz  (this repository, {len(files)} files)')
+                continue
+            if u.startswith('git+'):
+                url, _, frag = u[4:].partition('#')
+                commit = frag.removeprefix('commit=')
+                if not re.fullmatch(r'[0-9a-f]{40}', commit):
+                    raise SystemExit(f'build-packages: {d.name}: a git source must pin a full commit: {u}')
+                name = f"{Path(url).stem}-{commit}"
+                tarball = d / f'{name}.tar.gz'
+                if not tarball.is_file():
+                    g = d / f'.{name}.git'
+                    shutil.rmtree(g, ignore_errors=True)
+                    subprocess.run(['git', 'init', '-q', str(g)], check=True)
+                    subprocess.run(['git', '-C', str(g), 'fetch', '-q', '--depth', '1', url, commit], check=True)
+                    got = subprocess.run(['git', '-C', str(g), 'rev-parse', 'FETCH_HEAD'], text=True,
+                                         capture_output=True, check=True).stdout.strip()
+                    if got != commit:
+                        raise SystemExit(f'build-packages: {d.name}: got {got}, not the pinned {commit}')
+                    subprocess.run(['git', '-C', str(g), 'archive', '--format=tar.gz', f'--prefix={name}/',
+                                    '-o', str(tarball), 'FETCH_HEAD'], check=True)
+                    shutil.rmtree(g)
+                print(f'    {tarball.name}  (git, commit {commit[:12]})')
+                continue
+            f = d / Path(u.split('?')[0]).name
+            if not f.is_file():
+                print(f'    downloading {f.name}', flush=True)
+                req = urllib.request.Request(u, headers={'User-Agent': 'Iskra package builder'})
+                with urllib.request.urlopen(req, timeout=120) as r, open(f.with_suffix(f.suffix + '.part'), 'wb') as o:
+                    shutil.copyfileobj(r, o)
+                f.with_suffix(f.suffix + '.part').rename(f)
+            data = f.read_bytes()
+            if i < len(sha) and sha[i] != 'SKIP':
+                if hashlib.sha256(data).hexdigest() != sha[i]:
+                    raise SystemExit(f'build-packages: {f.name} does not match its SHA256SUM')
+            elif i < len(md5):
+                if hashlib.md5(data).hexdigest() != md5[i]:
+                    raise SystemExit(f'build-packages: {f.name} does not match its MD5SUM')
+            else:
+                raise SystemExit(f'build-packages: {d.name}: {f.name} has no checksum')
+
+    @staticmethod
+    def info(path):
+        """A .info file: shell variable assignments, read without running it."""
+        text = path.read_text()
+        out = {}
+        for m in re.finditer(r'^([A-Za-z_0-9]+)="((?:[^"\\]|\\.)*)"', text, re.M | re.S):
+            out[m.group(1)] = re.sub(r'\\\n', ' ', m.group(2))
+        return out
+
+    # ------------------------------------------------------------ building
+    def collect(self, before, name, requires):
+        """Copy packages new in ROOT's output folder to OUT, install them in ROOT, record their needs."""
+        made = [f for f in (self.root / 'tmp/iskra-out').glob('*.t?z') if f.name not in before]
+        if not made:
+            raise SystemExit(f'build-packages: {name} made no package')
+        for f in made:
+            shutil.copy2(f, self.out / f.name)
+            self.chroot('upgradepkg', '--install-new', '--reinstall', f'/tmp/iskra-out/{f.name}')
+            n = f.name.rsplit('-', 3)[0]
+            self.requires[n] = sorted(set(requires))
+            print(f'    made {f.name}')
+        self.reqfile.write_text(json.dumps(self.requires, indent=2, sort_keys=True))
+        return [self.out / f.name for f in made]
+
+    def files_of(self, name):
+        return [f for f in self.out.glob('*.t?z') if f.name.rsplit('-', 3)[0] == name]
+
+    @staticmethod
+    def fingerprint(*parts):
+        """A hash of everything a package is made from: folders, files and strings."""
+        h = hashlib.sha256()
+        for part in parts:
+            if isinstance(part, Path) and part.is_dir():
+                for f in sorted(part.rglob('*')):
+                    if f.is_file() and not f.name.startswith('.') and not f.name.endswith(('.tar.gz', '.log')):
+                        h.update(str(f.relative_to(part)).encode() + b'\0' + f.read_bytes())
+            elif isinstance(part, Path) and part.is_file():
+                h.update(part.read_bytes())
+            else:
+                h.update(str(part).encode())
+            h.update(b'\1')
+        return h.hexdigest()[:16]
+
+    def reuse(self, name, fpr):
+        """True if OUT already has NAME, made from exactly this."""
+        files = self.files_of(name)
+        if files and self.state.get(name) == fpr:
+            self.keep.update(f.name for f in files)
+            return True
+        return False
+
+    def made(self, name, fpr, files):
+        self.state[name] = fpr
+        self.keep.update(f.name for f in files)
+        self.statefile.write_text(json.dumps(self.state, indent=2, sort_keys=True))
+
+    def tidy(self, full):
+        """Older versions of what this run made go; after a full run, so does anything LIST dropped."""
+        names = {f.rsplit('-', 3)[0] for f in self.keep}
+        for f in self.out.glob('*.t?z'):
+            n = f.name.rsplit('-', 3)[0]
+            if f.name not in self.keep and (n in names or full):
+                print(f'    removing {f.name}')
+                f.unlink()
+        if full:
+            for n in list(self.requires):
+                if n not in names:
+                    del self.requires[n]
+            self.state = {n: v for n, v in self.state.items() if n in names}
+            self.reqfile.write_text(json.dumps(self.requires, indent=2, sort_keys=True))
+            self.statefile.write_text(json.dumps(self.state, indent=2, sort_keys=True))
+
+    def slackbuild(self, name, src, patch=None, stack=(), iskra=False):
+        if name in self.done:
+            return
+        if name in stack:
+            raise SystemExit(f'build-packages: {name} requires itself: {" -> ".join(stack + (name,))}')
+        info = self.info(src / f'{name}.info')
+        if info.get('VERSION') == '@ISKRA@':              # Iskra's own: the version in ./VERSION
+            info['VERSION'] = (HERE / 'VERSION').read_text().strip()
+        version = info.get('VERSION', '')
+        reqs = [r for r in info.get('REQUIRES', '').split() if r != '%README%']
+        need = []
+        if iskra:
+            # Iskra's own: REQUIRES is only what to install alongside (PACKAGES.TXT says so);
+            # BUILD_REQUIRES is what building needs
+            need = [self.ready_name(r) or r for r in reqs]
+            reqs = info.get('BUILD_REQUIRES', '').split()
+        for r in reqs:                                     # ready-made first, else Ponce's, built first
+            ready = self.ready_name(r)
+            if ready:
+                if not iskra:
+                    need.append(ready)
+                if not self.installed(ready):
+                    self.chroot('slpkg', 'install', '-o', 'all', '-y', ready)
+            elif r in self.ponce_index():
+                self.slackbuild(r, self.ponce_index()[r], stack=stack + (name,))
+                if not iskra:
+                    need.append(r)
+            else:
+                raise SystemExit(f'build-packages: {name} requires {r}, which no repository has')
+        source = [src, HERE / patch if patch else '', HERE / 'packages/lib.sh' if iskra else '']
+        if 'iskra-source' in info.get('DOWNLOAD', ''):
+            source.append(subprocess.run(['git', '-C', str(HERE), 'ls-files', '-s'], capture_output=True,
+                                         text=True).stdout)   # every file of this repository, by content
+        fpr = self.fingerprint(*source, version)
+        if self.reuse(name, fpr):
+            say(f'{name} {version}: unchanged, reused')
+            self.install_out(name)
+            self.done.add(name)
+            return
+        say(f'Building {name} {version} (SlackBuild from {src.parent.name if src.parent.name != "packages" else "Iskra"})')
+        d = self.work / name
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.copytree(src, d)
+        shutil.copy2(HERE / 'packages/lib.sh', self.work / 'lib.sh')
+        inf = d / f'{name}.info'
+        inf.write_text(inf.read_text().replace('"@ISKRA@"', f'"{version}"'))
+        if patch:
+            shutil.copy2(HERE / patch, d / Path(patch).name)
+            sb = (d / f'{name}.SlackBuild').read_text()
+            # apply Iskra's patch to the source as the SlackBuild unpacks it, wherever that is
+            sb = re.sub(r'(?m)^(cd \$(?:PRGNAM|SRCNAM)-\$VERSION\n)',
+                        rf'\1patch -p1 < $CWD/{Path(patch).name}\n', sb, count=1)
+            if Path(patch).name not in sb:
+                raise SystemExit(f'build-packages: {name}: could not find where to apply {patch}')
+            (d / f'{name}.SlackBuild').write_text(sb)
+        self.fetch(d, info)
+        out = self.root / 'tmp/iskra-out'
+        out.mkdir(exist_ok=True)
+        for f in out.glob('*.t?z'):                        # an earlier build of this one
+            if f.name.rsplit('-', 3)[0] == name:
+                f.unlink()
+        before = {f.name for f in out.glob('*.t?z')}
+        rc = self.chroot('sh', '-c', f'cd /tmp/iskra-build/{name} && OUTPUT=/tmp/iskra-out TAG=_iskra '
+                                     f'PKGTYPE=txz sh ./{name}.SlackBuild > /tmp/iskra-build/{name}.log 2>&1',
+                         check=False)
+        if rc:
+            log = (self.work / f'{name}.log').read_text(errors='replace').splitlines()
+            print('\n'.join(log[-40:]))
+            raise SystemExit(f'build-packages: {name} did not build (the whole log: {self.work}/{name}.log)')
+        made = self.collect(before, name, need)
+        self.made(name, fpr, made)
+        self.done.add(name)
+
+    def install_out(self, name):
+        for f in self.out.glob('*.t?z'):
+            if f.name.rsplit('-', 3)[0] == name and not self.installed(name):
+                (self.root / 'tmp/iskra-out').mkdir(exist_ok=True)
+                shutil.copy2(f, self.root / 'tmp/iskra-out' / f.name)
+                self.chroot('upgradepkg', '--install-new', f'/tmp/iskra-out/{f.name}')
+
+    _pidx = None
+
+    def ponce_index(self):
+        if self._pidx is None:
+            self._pidx = {p.parent.name: p.parent for p in self.ponce.glob('*/*/*.info')
+                          if p.stem == p.parent.name}
+        return self._pidx
+
+    def recipe(self, kind, name):
+        if name in self.done:
+            return
+        try:                        # the recipe's current version, from Arch or the AUR
+            if kind == 'aur':
+                r = json.load(urllib.request.urlopen(f'https://aur.archlinux.org/rpc/v5/info?arg[]={name}', timeout=60))
+                ver = r['results'][0]['Version'] if r['results'] else None
+            else:
+                r = json.load(urllib.request.urlopen(f'https://archlinux.org/packages/search/json/?name={name}', timeout=60))
+                ver = (lambda x: f"{x['pkgver']}-{x['pkgrel']}")(r['results'][0]) if r['results'] else None
+        except OSError:
+            ver = None
+        fpr = self.fingerprint(kind, name, ver or 'unknown', HERE / 'desktop/root/usr/lib/sparkpkg')
+        if ver and self.reuse(name, fpr):
+            for n, v in self.state.items():          # and what sparkpkg built for it on the way
+                if v == f'with:{name}:{fpr}':
+                    self.keep.update(f.name for f in self.files_of(n))
+            say(f'{name} {ver}: unchanged, reused')
+            self.done.add(name)
+            return
+        say(f'Building {name} {ver or ""} (sparkpkg, from {"Arch Linux" if kind == "arch" else "the AUR"})')
+        cache = self.root / 'var/cache/sparkpkg/packages'
+        cache.mkdir(parents=True, exist_ok=True)
+        before = {f.name for f in cache.glob('*.t?z')}
+        self.chroot('sparkpkg', kind, '-y', name)
+        made = [f for f in cache.glob('*.t?z') if f.name not in before]
+        recs = self.root / 'var/lib/sparkpkg/installed'
+        if not made:                    # built before, in ROOT: the record says which files
+            r = recs / f'{name}.json'
+            made = [self.root / p.lstrip('/') for p in json.loads(r.read_text())['files']] if r.is_file() else []
+        for f in made:
+            shutil.copy2(f, self.out / f.name)
+            n = f.name.rsplit('-', 3)[0]
+            r = recs / f'{n}.json'
+            self.requires[n] = json.loads(r.read_text()).get('requires', []) if r.is_file() else []
+            print(f'    made {f.name}')
+            if n != name:           # a dependency sparkpkg built on the way: published too
+                self.made(n, f'with:{name}:{fpr}', [self.out / f.name])
+        self.reqfile.write_text(json.dumps(self.requires, indent=2, sort_keys=True))
+        self.made(name, fpr, [self.out / f.name for f in made if f.name.rsplit('-', 3)[0] == name])
+        self.done.add(name)
+
+
+def entries():
+    for line in (HERE / 'packages/LIST').read_text().splitlines():
+        line = line.split('#', 1)[0].split()
+        if len(line) >= 2:
+            opts = dict(o.split('=', 1) for o in line[2:])
+            yield line[0], line[1], opts
+
+
+def main(argv):
+    if len(argv) < 2 or argv[0] in ('-h', '--help'):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    if os.geteuid() != 0:
+        raise SystemExit('build-packages: run it with sudo (it builds in a chroot)')
+    b = Builder(argv[0], argv[1])
+    want = set(argv[2:])
+    for name, src, opts in entries():
+        if want and name not in want:
+            continue
+        kind, _, where = src.partition(':')
+        if kind == 'iskra':
+            b.slackbuild(name, HERE / 'packages' / where, iskra=True)
+        elif kind == 'ponce':
+            b.slackbuild(name, b.ponce / where, patch=opts.get('patch'))
+        elif kind in ('arch', 'aur'):
+            b.recipe(kind, where)
+        else:
+            raise SystemExit(f'build-packages: {name}: unknown source {src}')
+    b.tidy(full=not want)
+    say(f'{len(list(b.out.glob("*.t?z")))} packages in {b.out}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

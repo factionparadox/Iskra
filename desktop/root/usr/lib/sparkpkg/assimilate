@@ -10,6 +10,7 @@
   assimilate where NAME         one line: slackware PKG REPO | arch PKG BASE | aur PKG BASE | missing
   assimilate search WORD        search the AUR and Arch by name and description
   assimilate outdated           assimilated packages with a newer recipe (one name per line)
+  assimilate expand NAME...     NAME and everything it requires across every repository, deps first
 
 Where a dependency's answer comes from, in order:
   1. names.tsv: Arch names Slackware spells differently, and things every Iskra system has
@@ -370,19 +371,21 @@ def plan(targets, res, dest):
     slack, recipes, missing, order, seen = {}, {}, [], [], set()
 
     def need(dep, why, build_only):
+        """Arrange for dep; returns the Slackware package name that answers it (None: nothing to need)."""
         a = res.resolve(dep)
         if a[0] == 'base':
-            return
+            return None
         if a[0] == 'slackware':
             if a[2] != 'installed':
                 slack.setdefault(a[1], {'repo': a[2], 'for': [], 'build_only': True})
                 slack[a[1]]['for'].append(why)
                 slack[a[1]]['build_only'] &= build_only
-            return
+            return a[1]
         if a[0] == 'missing':
             missing.append({'dependency': dep, 'for': why, 'reason': a[1]})
-            return
+            return None
         visit(a[0], a[2], a[1])
+        return a[1]
 
     def visit(kind, base, pkg):
         key = (kind, base)
@@ -392,7 +395,9 @@ def plan(targets, res, dest):
                 r['packages'].append(pkg)
                 for dep in field(r['_info'], pkg, 'depends'):
                     if bare(dep) not in r['packages']:
-                        need(dep, pkg, False)
+                        n = need(dep, pkg, False)
+                        if n:
+                            r['requires'].setdefault(pkg, []).append(n)
             return
         if key in seen:
             return
@@ -404,13 +409,17 @@ def plan(targets, res, dest):
         for dep in field(info, None, 'makedepends') + field(info, None, 'checkdepends'):
             need(dep, base, True)
         provided = set(names)
+        requires = {}                              # each split package's runtime needs, by Slackware name
         for n in names:
             for dep in field(info, n, 'depends'):
                 if bare(dep) not in provided:
-                    need(dep, n, False)
+                    got = need(dep, n, False)
+                    if got:
+                        requires.setdefault(n, []).append(got)
         recipes[key] = {'kind': kind, 'base': base, 'packages': names, 'version': ver,
                         'folder': str(d), 'description': field(info, names[0], 'pkgdesc', False)[:1],
-                        'arch': field(info, names[0], 'arch', False), '_info': info}
+                        'arch': field(info, names[0], 'arch', False), '_info': info,
+                        'requires': requires}
         order.append(key)
 
     for t in targets:
@@ -503,7 +512,9 @@ def run(targets, from_=None, yes=False):
         rec = STATE / 'installed'
         rec.mkdir(parents=True, exist_ok=True)
         for n in r['packages']:
-            (rec / f'{n}.json').write_text(json.dumps({**r, 'name': n, 'files': files}, indent=2))
+            (rec / f'{n}.json').write_text(json.dumps({**r, 'name': n, 'files': files,
+                                                      'requires': sorted(set(r['requires'].get(n, [])))},
+                                                     indent=2))
         built_all += files
     tools = [n for n, v in p['slackware'].items() if v['build_only']]
     if tools:
@@ -572,6 +583,36 @@ def search(word):
         print(f'{kind:<5} {n:<32} {v:<18} {d[:70]}')
 
 
+def expand(names):
+    """Everything NAMES need from the ready-made repositories, across all of them, deps first.
+
+    slpkg resolves a package's requirements only inside that package's own repository; Iskra's
+    packages require Slackware's, so sparkpkg follows them across every repository, in priority
+    order (the first repository with a name supplies it), and hands slpkg the whole list."""
+    slack = Slackware()
+    data = {}
+    for repo in reversed(slack.repos):
+        f = SLPKG_REPOS / repo / 'data.json'
+        if f.is_file() and repo not in ('ponce', 'sbo'):   # SlackBuilds: slpkg resolves those itself
+            for n, v in json.loads(f.read_text()).items():
+                data[n] = v.get('requires') or []
+    order, seen = [], set()
+
+    def walk(n, stack):
+        if n in seen or n in stack:
+            return
+        stack = stack + (n,)
+        for r in data.get(n, []):
+            walk(r, stack)
+        seen.add(n)
+        if n.lower() not in slack.installed or n in names:
+            order.append(n)
+
+    for n in names:
+        walk(n, ())
+    return order
+
+
 def main(argv):
     if not argv or argv[0] in ('-h', '--help', 'help'):
         print(__doc__.strip()); return 0
@@ -614,6 +655,8 @@ def main(argv):
     elif cmd == 'where':
         a = Resolver().resolve(args[0])
         print(' '.join(str(x) for x in a if x is not None))
+    elif cmd == 'expand':
+        print('\n'.join(expand(args)))
     elif cmd == 'search':
         search(' '.join(args))
     elif cmd == 'outdated':

@@ -1,0 +1,105 @@
+# Iskra's package repository: build every package in packages/LIST in a Slackware -current system,
+# sign them with Iskra's key, and publish them as the release "packages", where sparkpkg looks
+# (https://github.com/factionparadox/iskra/releases/download/packages/).
+#
+# Packages already published at the same version are reused, not built again.
+# Signing needs the secret ISKRA_SIGNING_KEY (build/make-signing-key sets it). Without it the
+# packages are still built, and kept as this run's artifact, but nothing is published.
+name: packages
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/**', 'desktop/**', 'learn/**', 'russian/**', 'branding/**', 'VERSION',
+            'build/build-packages', 'build/make-repo', 'build/ci-root', 'build/slackware-root',
+            '.github/workflows/packages.yml']
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Build only these packages (names from packages/LIST, space-separated; empty: all)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '17 3 * * 1'        # Mondays: rebuild against the week's -current
+
+permissions:
+  contents: write
+
+concurrency:
+  group: packages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Room to build (the runner's unused toolchains go)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
+          df -h / /mnt
+
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq curl gnupg xz-utils zstd git
+
+      - name: Slackware's packages, kept between runs
+        uses: actions/cache@v4
+        with:
+          path: /mnt/slackware-cache
+          key: slackware-current-${{ github.run_id }}
+          restore-keys: slackware-current-
+
+      - name: A Slackware -current system to build in
+        run: |
+          sudo mkdir -p /mnt/slackware-cache && sudo chown -R "$USER" /mnt/slackware-cache
+          sudo SLACK_CACHE=/mnt/slackware-cache build/slackware-root /mnt/root a ap d l n x xap
+
+      - name: Ready it for building (slpkg, fakeroot, sparkpkg, the repositories' lists)
+        run: sudo build/ci-root /mnt/root
+
+      - name: What is published already (reused if unchanged)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          gh release download packages -D out --pattern '*.txz' --pattern 'requires.json' \
+            --pattern 'ChangeLog.txt' --pattern 'PACKAGES.TXT' --pattern 'built.json' || echo "nothing published yet"
+          ls out | wc -l
+
+      - name: Build
+        run: sudo build/build-packages /mnt/root out ${{ github.event.inputs.only }}
+
+      - name: Make and sign the repository
+        env:
+          ISKRA_SIGNING_KEY: ${{ secrets.ISKRA_SIGNING_KEY }}
+        run: |
+          sudo chown -R "$USER" out
+          # only what packages/LIST still names is published
+          python3 build/make-repo out
+
+      - name: Keep the packages (this run's artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: iskra-packages
+          path: out/
+          retention-days: 14
+
+      - name: Publish (release "packages")
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f out/UNSIGNED ]; then
+            echo "::error::No signing key (secret ISKRA_SIGNING_KEY), so nothing is published. Run build/make-signing-key once."
+            exit 1
+          fi
+          gh release view packages >/dev/null 2>&1 ||
+            gh release create packages --title "Iskra's packages" --latest=false \
+              --notes "Iskra's package repository, for sparkpkg. Every package is signed; GPG-KEY is the key."
+          gh release upload packages out/* --clobber
+          # what packages/LIST no longer names goes from the release too
+          keep=$(cd out && ls)
+          gh release view packages --json assets --jq '.assets[].name' | while read -r a; do
+            grep -qxF "$a" <<<"$keep" || gh release delete-asset packages "$a" --yes
+          done

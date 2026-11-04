@@ -1,0 +1,16 @@
+#!/bin/bash
+# iskra-russian.SlackBuild: Iskra's SlackBuild for iskra-russian, made from this repository's own files.
+# Run in this folder, as root (build/build-packages provides iskra-source.tar.gz).
+PRGNAM=iskra-russian
+. ../lib.sh
+cd $TMP; rm -rf iskra-source; mkdir iskra-source
+tar xf $CWD/iskra-source.tar.gz -C iskra-source
+cd iskra-source/russian
+install -Dm755 iskra-russian $PKG/usr/bin/iskra-russian
+install -Dm755 iskra-content $PKG/usr/bin/iskra-content
+install -d $PKG/usr/lib/iskra/content $PKG/usr/share/iskra/russian $PKG/var/lib/iskra/russian
+install -m644 fetch-*.py mirror.json $PKG/usr/lib/iskra/content/
+install -m644 *.tsv VOCAB-SOURCES.md $PKG/usr/share/iskra/russian/
+chown -R root:root $PKG
+cd $PKG; slackdesc
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-noarch-$BUILD$TAG.$PKGTYPE"

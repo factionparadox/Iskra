@@ -1,0 +1,7 @@
+PRGNAM="llama.cpp"
+VERSION="0.8.0"
+HOMEPAGE="https://github.com/ggml-org/llama.cpp"
+DOWNLOAD="git+https://github.com/ggml-org/llama.cpp.git#commit=8642541b255bfb5dc39cd351a178be09013a55d6 https://github.com/ggml-org/llama.cpp/releases/download/b11960/llama-b11960-ui.tar.gz"
+SHA256SUM="SKIP f27576af534ac990a6c802fc5b6c7651e0a2c0b6ac857ba995bc343cf8a3b934"
+REQUIRES=""
+MAINTAINER="Iskra"

@@ -1,0 +1,26 @@
+#!/bin/bash
+# sparkpkg.SlackBuild: Iskra's SlackBuild for sparkpkg, made from this repository's own files.
+# Run in this folder, as root (build/build-packages provides iskra-source.tar.gz).
+PRGNAM=sparkpkg
+. ../lib.sh
+cd $TMP; rm -rf iskra-source; mkdir iskra-source
+tar xf $CWD/iskra-source.tar.gz -C iskra-source
+cd iskra-source/desktop/root
+mkdir -p $PKG/install
+for f in usr/bin/sparkpkg usr/lib/sparkpkg usr/share/sparkpkg etc/slpkg etc/ld.so.conf.d/sparkpkg.conf etc/profile.d/sparkpkg.sh; do
+  mkdir -p "$PKG/$(dirname $f)"; cp -a "$f" "$PKG/$f"
+done
+chmod 755 $PKG/usr/bin/sparkpkg $PKG/usr/lib/sparkpkg/assimilate
+chmod 644 $PKG/usr/lib/sparkpkg/pkgbuild.sh
+cp $CWD/doinst.sh $PKG/install/doinst.sh
+( cd $PKG && find etc -type f ) | while read -r f; do
+  mv "$PKG/$f" "$PKG/$f.new"
+  echo "config $f.new" >> $PKG/install/doinst.sh
+done
+# slpkg's own settings: Iskra's replace slpkg's stock ones (see doinst.sh)
+sed -i 's|^config etc/slpkg/|takeover etc/slpkg/|' $PKG/install/doinst.sh
+mkdir -p $PKG/var/lib/sparkpkg $PKG/var/cache/sparkpkg $PKG/usr/doc/$PRGNAM-$VERSION
+cp ../../learn/wiki/sparkpkg.md $PKG/usr/doc/$PRGNAM-$VERSION/
+chown -R root:root $PKG
+cd $PKG; slackdesc
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-noarch-$BUILD$TAG.$PKGTYPE"

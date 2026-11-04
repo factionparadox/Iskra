@@ -1,0 +1,11 @@
+#!/bin/bash
+# font-go.SlackBuild: Iskra's SlackBuild for font-go. Run in this folder, as root.
+PRGNAM=font-go
+ARCH=noarch
+. ../lib.sh
+SRC=image-c437a9130dcb43e6df402a034160826e29fd29b8
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz
+install -d $PKG/usr/share/fonts/TTF $PKG/usr/doc/$PRGNAM-$VERSION
+install -m644 $SRC/font/gofont/ttfs/*.ttf $PKG/usr/share/fonts/TTF/
+install -m644 $SRC/font/gofont/ttfs/README $PKG/usr/doc/$PRGNAM-$VERSION/ 2>/dev/null || cp $SRC/LICENSE $PKG/usr/doc/$PRGNAM-$VERSION/
+finish

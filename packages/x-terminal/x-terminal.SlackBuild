@@ -1,0 +1,20 @@
+#!/bin/bash
+# x-terminal.SlackBuild: Iskra's SlackBuild for x-terminal. Run in this folder, as root.
+PRGNAM=x-terminal
+. ../lib.sh
+SRC=st-flexipatch-9c733c4b78bf3a145f25a737beac38c52ad63b76
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz; cd $SRC
+# patches.h picks st-flexipatch's patches; config.h is the look and the keys
+cp $CWD/config.h $CWD/patches.h .
+# the window's name and class: X-терминал, not st
+sed -i -e 's/(opt_line || !opt_cmd) ? "st" : opt_cmd\[0\]/(opt_line || !opt_cmd) ? "X-терминал" : opt_cmd[0]/' \
+       -e 's/opt_name ? opt_name : "st"/opt_name ? opt_name : "x-terminal"/' x.c
+sed -i "/^CFLAGS/s/-Os/$SLKCFLAGS/" config.mk
+make PREFIX=/usr X11INC=/usr/include X11LIB=/usr/lib$LIBDIRSUFFIX
+mkdir -p $PKG/usr/share/terminfo
+make DESTDIR=$PKG PREFIX=/usr MANPREFIX=/usr/man TERMINFO=$PKG/usr/share/terminfo install
+# installed as x-terminal, so it never clashes with any other st
+mv $PKG/usr/bin/st $PKG/usr/bin/x-terminal
+mv $PKG/usr/man/man1/st.1 $PKG/usr/man/man1/x-terminal.1
+mkdir -p $PKG/usr/doc/$PRGNAM-$VERSION; cp LICENSE README.md $PKG/usr/doc/$PRGNAM-$VERSION/ 2>/dev/null || true
+finish

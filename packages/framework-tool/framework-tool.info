@@ -1,0 +1,7 @@
+PRGNAM="framework-tool"
+VERSION="0.6.2"
+HOMEPAGE="https://github.com/FrameworkComputer/framework-system"
+DOWNLOAD="https://github.com/FrameworkComputer/framework-system/releases/download/v0.6.2/framework_tool"
+SHA256SUM="2c03a7843ab1ef3625e22b9066c59e6bb42be7e5ef5c4ab18e0cde6598fe6f0c"
+REQUIRES=""
+MAINTAINER="Iskra"

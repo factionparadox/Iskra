@@ -1,0 +1,68 @@
+# Iskra's package repository: everything Iskra's CI builds and publishes, ready-made, so that
+# nothing on Iskra ever has to be compiled on the laptop. Built in this order, each in a clean
+# Slackware -current system, by build/build-packages; published by build/make-repo.
+#
+# One package a line:  NAME  FROM
+#   iskra:NAME      Iskra's own SlackBuild, in packages/NAME/
+#   ponce:PATH      Ponce's SlackBuild for -current (github.com/Ponce/slackbuilds, branch current),
+#                   optionally with  patch=packages/NAME/x.patch. What it REQUIRES is installed from
+#                   the ready-made repositories, or built here first from Ponce's too.
+#   arch:NAME       built by sparkpkg from Arch Linux's own recipe
+#   aur:NAME        built by sparkpkg from the AUR's recipe
+# Everything else Iskra installs comes ready-made from Slackware, AlienBOB or conraid.
+
+# sparkpkg's own tools
+fakeroot                ponce:system/fakeroot
+slpkg                   ponce:system/slpkg  patch=packages/slpkg/iskra.patch
+
+# the desktop
+ratpoison               ponce:desktop/ratpoison
+polybar                 ponce:desktop/polybar
+dmenu                   ponce:desktop/dmenu
+dunst                   ponce:desktop/dunst
+feh                     ponce:graphics/feh
+slock                   ponce:desktop/slock
+xss-lock                ponce:desktop/xss-lock
+redshift                ponce:desktop/redshift
+xbanish                 ponce:misc/xbanish
+brightnessctl           ponce:system/brightnessctl
+clipmenu                ponce:desktop/clipmenu
+maim                    ponce:graphics/maim
+plan9port               ponce:system/plan9port
+x-terminal              iskra:x-terminal
+font-go                 iskra:font-go
+font-ipaex              iskra:font-ipaex
+ly                      arch:ly
+networkmanager-dmenu    arch:networkmanager-dmenu
+udiskie                 ponce:system/udiskie
+pulsemixer              ponce:audio/pulsemixer
+bluetuith               aur:bluetuith
+zathura                 ponce:office/zathura
+zathura-pdf-mupdf       ponce:office/zathura-pdf-mupdf
+chrony                  ponce:network/chrony
+
+# the 13 Pro: power, temperature and Framework's own tool
+thermald                ponce:system/thermald
+intel-lpmd              arch:intel-lpmd
+framework-tool          iskra:framework-tool
+
+# programs
+freetube                ponce:multimedia/freetube
+webcord                 aur:webcord-bin
+proton-vpn-gtk-app      arch:proton-vpn-gtk-app
+yt-dlp                  ponce:network/yt-dlp
+ani-cli                 ponce:network/ani-cli
+
+# Russian: dictionaries, the tutor's engine and voices
+hunspell-en             ponce:office/hunspell-en
+hunspell-russian-aot    ponce:office/hunspell-russian-aot
+llama.cpp               iskra:llama.cpp
+piper-tts               iskra:piper-tts
+kiwix-tools             ponce:system/kiwix-tools
+
+# Iskra itself
+sparkpkg                iskra:sparkpkg
+iskra-desktop           iskra:iskra-desktop
+iskra-learn             iskra:iskra-learn
+iskra-russian           iskra:iskra-russian
+iskra                   iskra:iskra
