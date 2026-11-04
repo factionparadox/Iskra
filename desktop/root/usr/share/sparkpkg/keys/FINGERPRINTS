@@ -3,4 +3,4 @@
 slack    EC5649DA401E22ABFA6736EF6A4463C040102233   Slackware Linux Project <security@slackware.com>
 alien    F2CE1B92EE1F2C0CE97E581E5E56AAAFA75CBDA0   Eric Hameleers (AlienBOB): alien, multilib, restricted
 conraid  4BF59BAD8DA540E96001D8B9977C9E455BDE0D62   Corrado Franco (conraid)
-# iskra  (added when Iskra's package key is made, in CI; only the public half is ever kept here)
+iskra    8236C5FB591B6DD22CED003CB35FDE0140A584F1   Iskra packages (github.com/factionparadox/Iskra)
