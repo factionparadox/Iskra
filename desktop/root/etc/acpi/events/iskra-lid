@@ -1,0 +1,3 @@
+# Iskra: the lid closed: sleep (and hibernate after two hours on battery)
+event=button[ /]lid.*
+action=/usr/bin/iskra-sleep lid

@@ -1,65 +1,73 @@
-# From Arch to CRUX
+# From Arch to Slackware
 
-Arch and CRUX are close relatives in spirit (Arch began as a CRUX-inspired distribution, and
-Arch's rc.conf and makepkg will look familiar here): simple, close to upstream, plain text
-configuration. The differences: CRUX builds
-everything from source on your machine, has no systemd (init is SysVinit with BSD-style rc
-scripts), and its package tools are a few small programs. Most Arch knowledge about programs
-carries straight over; this table is the rest.
+Arch and Slackware share a lot in spirit: simple, close to upstream, plain-text configuration,
+and a system you are expected to understand. The differences: Slackware is the oldest
+distribution still going, and it stays conservative about how the system works. It has no
+systemd (init is SysVinit with BSD-style rc scripts), its package tools don't track
+dependencies, and a full installation is assumed, so nearly everything is already there. Iskra
+runs Slackware -current, the development branch, which is updated all the time. (Iskra itself
+used to be built on CRUX, the distribution that inspired Arch.) Most Arch knowledge about
+programs carries straight over; this table is the rest.
 
 ## Packages
-  pacman -Syu                 iskra-update   (git pull, ports -u, then prt-get sysup)
-  pacman -Sy                  sudo ports -u                (new ports; nothing rebuilt)
-  pacman -S foo               sudo prt-get depinst foo     (built here, with its dependencies)
-  pacman -Rns foo             sudo prt-get remove foo      (dependencies stay: remove them too)
-  pacman -Ss word             prt-get search word ; prt-get dsearch word
-  pacman -Qi foo / -Si foo    prt-get info foo
-  pacman -Ql foo              pkginfo -l foo
-  pacman -Qo /path            pkginfo -o path              (a regular expression, no leading /)
-  pacman -Q                   pkginfo -i ; prt-get listinst
-  pacman -Qu                  prt-get diff
-  pacman -Qdt                 prt-get listorphans
-  pacman -Sc                  rm what you no longer need from /usr/ports/distfiles, packages
-  IgnorePkg in pacman.conf    sudo prt-get lock foo
-  downgrade                   sudo port-undo foo           (see: iskra-tools)
-  makepkg / PKGBUILD          pkgmk / Pkgfile              (see: pkgfiles)
-  the AUR, yay, paru           port-aurum foo: converts the PKGBUILD   (see: iskra-tools)
-  pacman-key                  CRUX's signify keys in /etc/ports; Iskra's sha256 files
-  pacman -U file.pkg.tar.zst  sudo pkgadd file.pkg.tar.zst ; -u to upgrade
-  .pacnew files               sudo rejmerge
+  pacman -Syu                 iskra-update   (or: sudo sparkpkg upgrade)
+  pacman -Sy                  sudo sparkpkg sync             (new lists; nothing installed)
+  pacman -S foo               sudo sparkpkg install foo      (with what it needs)
+  pacman -R foo               sudo sparkpkg remove foo
+  pacman -Ss word             sparkpkg search word           (every repository, Arch, the AUR)
+  pacman -Qi foo / -Si foo    sparkpkg info foo
+  pacman -Ql foo              slpkg list-files foo ; less /var/lib/pkgtools/packages/foo-*
+  pacman -F file              slpkg file-search file
+  pacman -Qo /path            grep -l '^path$' /var/lib/pkgtools/packages/*   (no leading /)
+  pacman -Q                   ls /var/lib/pkgtools/packages
+  pacman -Qu                  iskra-update --dry
+  pacman -Qdt                 sparkpkg orphans
+  pacman -Qi (Required By)    sparkpkg why foo               (what needs foo)
+  IgnorePkg in pacman.conf    sudo slpkg pin foo             (see: slpkg)
+  undo the last change        sudo sparkpkg undo             (see: sparkpkg)
+  downgrade                   sudo upgradepkg OLDER.txz      (see: pkgtools)
+  /var/log/pacman.log         sparkpkg history
+  makepkg / PKGBUILD          a SlackBuild and makepkg       (see: slackbuilds)
+  the AUR, yay, paru          sparkpkg aur foo: builds the AUR's PKGBUILD into a Slackware
+                              package                        (see: sparkpkg)
+  pacman-key                  the pinned keys in /usr/share/sparkpkg/keys (see: repositories)
+  pacman -U file.pkg.tar.zst  sudo upgradepkg --install-new file.txz    (see: pkgtools)
+  .pacnew files               .new files (iskra-update lists them)
 
 ## Services and the system
-  systemctl enable foo        add foo to SERVICES in /etc/rc.conf
-  systemctl disable foo       take it out of SERVICES
-  systemctl start/stop foo    sudo /etc/rc.d/foo start / stop
-  systemctl restart foo       sudo /etc/rc.d/foo restart
-  systemctl status foo        sudo /etc/rc.d/foo status
-  systemctl list-units        ls /etc/rc.d ; cat /etc/rc.conf
+  systemctl enable foo        sudo chmod +x /etc/rc.d/rc.foo
+  systemctl disable foo       sudo chmod -x /etc/rc.d/rc.foo
+  systemctl start/stop foo    sudo /etc/rc.d/rc.foo start / stop
+  systemctl restart foo       sudo /etc/rc.d/rc.foo restart
+  systemctl status foo        sudo /etc/rc.d/rc.foo status
+  systemctl list-units        ls -l /etc/rc.d ; sudo /etc/rc.d/rc.iskra status
   journalctl -f               sudo tail -f /var/log/messages
   journalctl -u foo           /var/log/messages, or /var/log/foo.log if it has one
   journalctl -k               sudo dmesg
-  systemctl suspend           iskra-sleep suspend           (see: sleep)
+  systemctl suspend           iskra-sleep suspend             (see: sleep)
   systemctl poweroff/reboot   sudo poweroff / sudo reboot
-  timedatectl set-timezone    TIMEZONE= in /etc/rc.conf      (see: rc-conf)
-  locale.gen / locale-gen     localedef -i en_GB -f UTF-8 en_GB.UTF-8     (see: locale)
-  hostnamectl set-hostname    HOSTNAME= in /etc/rc.conf, and /etc/hosts
-  vconsole.conf               KEYMAP= and FONT= in /etc/rc.conf
-  mkinitcpio -P               dracut (the linux port runs it)  (see: boot)
+  timedatectl set-timezone    sudo timeconfig, or the /etc/localtime link   (see: locale)
+  locale.gen / locale-gen     nothing to generate: glibc-i18n has every locale (locale -a)
+  hostnamectl set-hostname    /etc/HOSTNAME and /etc/hosts    (see: system-files)
+  vconsole.conf               /etc/rc.d/rc.keymap ; setfont   (see: locale)
+  mkinitcpio -P               mkinitrd, if you need an initrd at all (see: boot)
   /etc/fstab, /etc/default/grub   the same files, the same way
-  systemd-timesyncd           chronyd                          (see: time)
-  systemd-networkd/resolved   NetworkManager (Iskra)
-  systemd timers              crond                            (see: time)
+  systemd-timesyncd           chrony                          (see: time)
+  systemd-networkd/resolved   NetworkManager
+  systemd timers              crond                           (see: time)
   systemd --user services     ~/.config/iskra/autostart, run by the session
-  logind.conf                 acpid's rules and iskra-sleep  (see: sleep)
+  logind.conf (lid, power)    acpid's rules in /etc/acpi/events and iskra-sleep (see: sleep)
   arch-chroot                 mount --bind /dev /proc /sys /run, then chroot (learn recovery)
 
 ## Things that differ in spirit
-- Everything is compiled: an update is hours, not minutes, when Firefox or the kernel change.
-- No rollback and no snapshots: keep the old package files, and back up /etc before large
-  changes.
-- No dependency resolution on removal: prt-get remove takes only what you name.
-- Ports are short shell scripts you are expected to read and copy.
-- No journal: plain text logs through syslog in /var/log.
+- Slackware doesn't record dependencies in its packages; sparkpkg works them out from the
+  repositories' lists. Removing a package takes only what you name: sparkpkg orphans finds
+  what nothing needs any more.
+- A full Slackware is installed, so most libraries and tools you'd install on Arch are already
+  there.
+- Arch's programs keep Arch's layout when sparkpkg builds them (libraries in /usr/lib;
+  Slackware's are in /usr/lib64); /etc/ld.so.conf.d/sparkpkg.conf finds both.
+- No journal: plain-text logs through syslog in /var/log.
 
-See also: prt-get, rc, rc-conf, ports ; iskra-handbook ;
+See also: sparkpkg, rc, system-files, repositories ; iskra-handbook ;
 the Arch Wiki's package-manager table: https://wiki.archlinux.org/title/Pacman/Rosetta

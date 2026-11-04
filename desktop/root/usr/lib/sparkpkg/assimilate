@@ -12,6 +12,9 @@
   assimilate outdated           assimilated packages with a newer recipe (one name per line)
   assimilate expand NAME...     NAME and everything it requires across every repository, deps first
   assimilate fetch DIR NAME...  download ready-made packages into DIR, checksums and signatures checked
+  assimilate snapshot KIND [NAME...]  before install/remove/upgrade: what's installed, and copies
+                                of the packages it may replace or remove (for undo)
+  assimilate undo [-y]          put things back as they were before the last change
 
 Where a dependency's answer comes from, in order:
   1. names.tsv: Arch names Slackware spells differently, and things every Iskra system has
@@ -665,6 +668,136 @@ def fetch_packages(names, dest):
     return got
 
 
+# ---------------------------------------------------------------- undo
+
+UNDO = STATE / 'undo'
+
+
+def installed_map():
+    """name -> full package name (name-version-arch-build), of everything installed."""
+    return {f.name.rsplit('-', 3)[0]: f.name for f in PKGDB.iterdir()} if PKGDB.is_dir() else {}
+
+
+def repack(full, dest):
+    """Make a package file of an installed package, from its files as they are now on disk, its
+    install script and its description, so it can be put back exactly as it is."""
+    entry = (PKGDB / full).read_text(errors='replace')
+    head, _, files = entry.partition('FILE LIST:')
+    desc = head.partition('PACKAGE DESCRIPTION:')[2].strip('\n')
+    stage = dest / f'.stage-{full}'
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True)
+    for p in files.split('\n'):
+        p = p.strip()
+        if not p or p in ('./', '.') or p.startswith('install/'):
+            continue
+        src, dst = ROOT / p, stage / p
+        if p.endswith('/'):
+            dst.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                st = src.stat(); os.chmod(dst, st.st_mode & 0o7777); os.chown(dst, st.st_uid, st.st_gid)
+            continue
+        if not (src.exists() or src.is_symlink()):
+            continue                         # gone since it was installed: nothing to keep
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            os.symlink(os.readlink(src), dst)
+        else:
+            shutil.copy2(src, dst)
+        st = src.lstat()
+        os.lchown(dst, st.st_uid, st.st_gid)
+    (stage / 'install').mkdir(exist_ok=True)
+    if desc:
+        (stage / 'install/slack-desc').write_text(desc + '\n')
+    script = ROOT / 'var/lib/pkgtools/scripts' / full
+    if script.is_file():
+        shutil.copy2(script, stage / 'install/doinst.sh')
+    out = dest / f'{full}.txz'
+    r = subprocess.run(['/sbin/makepkg', '-l', 'n', '-c', 'n', str(out)], cwd=stage,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    shutil.rmtree(stage, ignore_errors=True)
+    if r.returncode or not out.is_file():
+        raise SystemExit(f'sparkpkg: could not keep a copy of {full} for undo: {r.stderr.strip()[-200:]}')
+    return out
+
+
+def upgrade_candidates(now):
+    """Installed packages an upgrade would replace or remove: a different version first in priority
+    order, or (Slackware's own) no longer in Slackware."""
+    slack = Slackware()
+    best, slackware_names = {}, set()
+    for repo in reversed(slack.repos):
+        f = SLPKG_REPOS / repo / 'data.json'
+        if f.is_file():
+            d = json.loads(f.read_text())
+            if repo == 'slack':
+                slackware_names = set(d)
+            for n, v in d.items():
+                if 'package' in v:
+                    best[n] = v['package'].rsplit('.', 1)[0]
+    out = []
+    for n, full in now.items():
+        if n in best and best[n] != full:
+            out.append(n)
+        elif n not in best and not re.search(r'[a-z_]+$', full.rsplit('-', 1)[1].lstrip('0123456789')) \
+                and slackware_names and n not in slackware_names:
+            out.append(n)                    # one of Slackware's, dropped from -current
+    return out
+
+
+def snapshot(kind, names):
+    """Before a change: what is installed, and a copy of every package the change may replace or remove."""
+    now = installed_map()
+    shutil.rmtree(UNDO, ignore_errors=True)
+    (UNDO / 'packages').mkdir(parents=True)
+    keep = [n for n in names if n in now]
+    if kind == 'upgrade':                    # and everything the upgrade would replace or remove
+        keep = sorted(set(keep) | set(upgrade_candidates(now)) | {n for n, *_ in outdated()})
+    if keep:
+        say(f'==> Keeping a copy of {len(keep)} package{"s" if len(keep) != 1 else ""} first, so sparkpkg undo can put '
+            f'{"them" if len(keep) != 1 else "it"} back')
+    for n in keep:
+        repack(now[n], UNDO / 'packages')
+    (UNDO / 'before.json').write_text(json.dumps({'kind': kind, 'names': names, 'installed': now}, indent=1))
+
+
+def undo(yes=False):
+    if os.geteuid() != 0:
+        raise SystemExit('sparkpkg: undo changes packages, so it needs root:  sudo sparkpkg undo')
+    f = UNDO / 'before.json'
+    if not f.is_file():
+        raise SystemExit('sparkpkg: there is nothing to undo (only the last install, upgrade or removal can be)')
+    before = json.loads(f.read_text())['installed']
+    now = installed_map()
+    added = sorted(n for n in now if n not in before)
+    changed = sorted(n for n in before if now.get(n) != before[n])
+    missing = [n for n in changed if not (UNDO / 'packages' / f'{before[n]}.txz').is_file()]
+    if not added and not changed:
+        say('Nothing has changed since then: nothing to undo.')
+        return 0
+    if missing:
+        say('These were changed, but sparkpkg kept no copy of how they were, so it would not be a '
+            'complete undo. Nothing has been changed:')
+        for n in missing:
+            say(f'  {before[n]}  (now: {now.get(n, "removed")})')
+        return 1
+    say('Undo puts things back as they were before the last change:')
+    for n in added:
+        say(f'  remove   {now[n]}')
+    for n in changed:
+        say(f'  restore  {before[n]}' + (f'  (instead of {now[n]})' if n in now else ''))
+    if not ask('\nGo ahead?', True, yes):
+        return 1
+    for n in added:
+        subprocess.run(['/sbin/removepkg', now[n]], check=True)
+    pkgs = [str(UNDO / 'packages' / f'{before[n]}.txz') for n in changed]
+    if pkgs:
+        subprocess.run(['/sbin/upgradepkg', '--install-new', '--reinstall', *pkgs], check=True)
+    shutil.rmtree(UNDO, ignore_errors=True)
+    say('Done: back as it was.')
+    return 0
+
+
 def main(argv):
     if not argv or argv[0] in ('-h', '--help', 'help'):
         print(__doc__.strip()); return 0
@@ -713,6 +846,10 @@ def main(argv):
         if len(args) < 2:
             raise SystemExit('usage: assimilate fetch DIR NAME...')
         fetch_packages(args[1:], args[0])
+    elif cmd == 'snapshot':
+        snapshot(args[0], args[1:])
+    elif cmd == 'undo':
+        return undo('-y' in args or '--yes' in args)
     elif cmd == 'search':
         search(' '.join(args))
     elif cmd == 'outdated':

@@ -4,7 +4,7 @@ The installer split the disk (GPT) into three partitions, which lsblk -f shows:
   1. EFI system partition, 1 GiB, FAT32, mounted at /boot/efi: GRUB lives here.
   2. swap, the size of the RAM: hibernation writes memory here, and it is the overflow when
      memory runs short (there is no zram).
-  3. the root filesystem, XFS, at /: everything else, /usr/ports and its builds included.
+  3. the root filesystem, XFS, at /: everything else.
 NVMe partitions are named with a p: /dev/nvme0n1p1, p2, p3.
 
 They are in /etc/fstab, by UUID, which the installer wrote; edit it like any file
@@ -12,9 +12,8 @@ They are in /etc/fstab, by UUID, which the installer wrote; edit it like any fil
 
 ## Why XFS
 XFS is fast with large files and many files at once, and very mature. It can grow
-(xfs_growfs) but never shrink, and it has no snapshots: on CRUX there is no system rollback
-either, so your undo for the system is the old package files in /usr/ports/packages, and for
-your files, a backup. Check it from the install stick, unmounted, with xfs_repair; while
+(xfs_growfs) but never shrink, and it has no snapshots: your undo for packages is sparkpkg undo,
+and for your files, a backup. Check it from the install stick, unmounted, with xfs_repair; while
 mounted, xfs_scrub checks online.
 
 ## Look
@@ -22,9 +21,7 @@ mounted, xfs_scrub checks online.
     cat /etc/fstab
     swapon --show
     xfs_info /                        XFS geometry
-    du -sh /usr/ports/distfiles /usr/ports/packages /var/tmp/pkgmk-*  what building keeps
-Old sources and packages pile up in /usr/ports/distfiles and packages; delete the ones you no
-longer need (keep the last package of anything you may want to go back to).
+    du -sh /var/cache/sparkpkg/packages   packages sparkpkg built from recipes, kept for undo
 
 ## TRIM
 Nothing trims the SSD on a schedule. Now and then:

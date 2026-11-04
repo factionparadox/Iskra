@@ -1,53 +1,55 @@
 # When something breaks
 
 Find the first layer that failed, collect the exact error, then change one thing.
-firmware -> GRUB -> kernel/initramfs -> XFS root -> init and /etc/rc -> services -> ly -> X
--> ratpoison
+firmware -> GRUB -> kernel -> XFS root -> init and rc.S -> rc.M and rc.local (services) -> ly
+-> X -> ratpoison
 
 ## An update went wrong
-CRUX has no generations and no rollback: iskra-update rebuilds packages and replaces the old
-ones. What you have instead:
-- The previous package file. Every build lands in /usr/ports/packages as
-  NAME#VERSION-RELEASE.pkg.tar.zst, and an older version stays until a build of the same
-  name and version overwrites it:
-      ls /usr/ports/packages/NAME#*
-      sudo pkgadd -u -f /usr/ports/packages/NAME#OLDVERSION-1.pkg.tar.zst
-      sudo prt-get lock NAME                 so the next sysup leaves it alone
-- The build log, if it was a build that failed: /var/log/pkgbuild/NAME.log. A failed build
-  changes nothing installed; fix the cause and run iskra-update again.
-- Configuration: an update does not overwrite your files in /etc; sudo rejmerge offers the
-  new versions it put aside.
-- After a library update, a program may complain of a missing .so: rebuild it with
-  sudo prt-get update NAME (revdep, from the prt-utils port, finds them all).
+- Take it back:  sudo sparkpkg undo  undoes the last install, upgrade or removal (sparkpkg
+  history shows what that was). Then keep the package from moving again until it's fixed:
+      sudo slpkg pin NAME                (sudo slpkg pin -u NAME later)
+- An older package file puts that version back:  sudo upgradepkg OLDER.txz  (upgradepkg
+  doesn't mind going backwards). Packages sparkpkg built from recipes are kept in
+  /var/cache/sparkpkg/packages.
+- Settings: an update never overwrites a settings file you've edited; the new one sits beside
+  it as NAME.new (find /etc -name '*.new'). If a program misbehaves after an update, compare
+  the two: the new version may need a setting yours doesn't have.
+- A program complaining of a missing library (.so) after an update: something it needs was
+  upgraded without it. sudo iskra-update usually brings the rest; slpkg check-broken lists
+  what slpkg installed whose dependencies are gone.
+- Slackware -current's ChangeLog (iskra-handbook notes) says what changed, and often what to
+  do about it.
 
 ## The desktop does not start
-Log in on another console (Ctrl+Alt+F2) and read /var/log/Xorg.0.log. Fix ~/.xinitrc or
-~/.ratpoisonrc, or move them aside: the defaults are in /usr/share/iskra/skel/ (cp from there
-to put one back). If ly itself is the trouble, comment out its line (c1) in /etc/inittab and
-run sudo init q: tty1 is free again, and startx from it starts the desktop.
+Log in on another console (Ctrl+Alt+F2) and read /var/log/Xorg.0.log (or
+~/.local/share/xorg/Xorg.0.log). Fix ~/.xinitrc or ~/.ratpoisonrc, or move them aside: the
+defaults are in /usr/share/iskra/skel/ (cp from there to put one back). If ly itself is the
+trouble and won't start, /usr/lib/iskra/login gives you the ordinary text login on tty1
+instead; from there, startx starts the desktop.
 
 ## A service fails
-    for s in /etc/rc.d/*; do echo "${s##*/}: $(sudo $s status 2>&1 | head -n 1)"; done
-    sudo tail -n 50 /var/log/messages     the system log; some services have /var/log/NAME.log
-    sudo /etc/rc.d/NAME restart
-    sudo sh -x /etc/rc.d/NAME start       every line the script runs, to see where it stops
+    sudo /etc/rc.d/rc.iskra status          Iskra's services
+    sudo /etc/rc.d/rc.NAME status           one of Slackware's
+    sudo tail -n 50 /var/log/syslog /var/log/messages     the system log; some services have
+                                            /var/log/NAME.log
+    sudo /etc/rc.d/rc.NAME restart
+    sudo sh -x /etc/rc.d/rc.NAME start      every line the script runs, to see where it stops
 
 ## It does not boot at all
-Boot the Iskra stick, press Alt+F2 for a root shell, mount the disk and go into it, as the
-CRUX handbook does:
-    mount /dev/nvme0n1p3 /mnt ; mount /dev/nvme0n1p1 /mnt/boot/efi
-    for d in dev dev/pts proc sys run sys/firmware/efi/efivars; do mount --bind /$d /mnt/$d; done
-    chroot /mnt /bin/bash
-Then, inside: put an old kernel back (iskra-learn learn kernel), remake the initramfs
-(dracut --force --early-microcode --kver 7.3.1-iskra /boot/initramfs-7.3.1-iskra.img),
-or reinstall GRUB:
+Boot the Iskra stick (the live session: user live, password live), open a terminal, and go into
+the installed system:
+    sudo mount /dev/nvme0n1p3 /mnt ; sudo mount /dev/nvme0n1p1 /mnt/boot/efi
+    for d in dev dev/pts proc sys run sys/firmware/efi/efivars; do sudo mount --bind /$d /mnt/$d; done
+    sudo chroot /mnt /bin/bash
+Then, inside: put a working kernel back (sparkpkg undo, or upgradepkg a kernel-generic package
+file), remake GRUB's menu, or reinstall GRUB:
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Iskra
     grub-mkconfig -o /boot/grub/grub.cfg
-The XFS root can be checked only unmounted, from the stick:  xfs_repair /dev/nvme0n1p3
+The XFS root can be checked only unmounted, from the stick:  sudo xfs_repair /dev/nvme0n1p3
 
 ## Logs
-    sudo tail -n 100 /var/log/messages
+    sudo tail -n 100 /var/log/syslog
     sudo dmesg | tail -n 50
-    less /var/log/iskra-install.log ; ls /var/log/pkgbuild
+    less /var/log/iskra-install.log ; sparkpkg history
 
-References: iskra-handbook ; man pkgadd ; man prt-get ; man xfs_repair
+References: iskra-handbook ; man upgradepkg ; man slpkg ; man xfs_repair ; iskra-learn wiki rc

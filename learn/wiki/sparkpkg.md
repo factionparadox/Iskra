@@ -10,12 +10,23 @@ what else it needs. sparkpkg is the one command that does it all for you:
   sparkpkg upgrade                bring the whole system up to date (also: iskra-update)
   sparkpkg search word            look for software everywhere sparkpkg can get it
   sparkpkg info foo               what foo is, and where it would come from
-  sparkpkg undo                   take back the last install, upgrade or removal
+  sparkpkg undo                   put things back as they were before the last install,
+                                  upgrade or removal
   sparkpkg history                what changed, and when
   sparkpkg help                   all of it; sparkpkg tools: Slackware's own tools, explained
 
 It asks for your password itself (sudo) when it needs to, and asks before it changes anything.
 Add -y to answer yes to everything.
+
+## Undo
+
+Before every install, upgrade or removal, sparkpkg notes what is installed, and keeps a copy of
+each package the change is about to replace or remove, made from its files as they are on the
+disk (with its install script, so its links and settings come back too). sparkpkg undo then
+puts things back as they were: what the change added is removed, and what it replaced or removed
+is put back from those copies, so an upgrade comes undone to the versions you had before. Only
+the last change can be undone; the copies are in /var/lib/sparkpkg/undo until the next one.
+If something changed that sparkpkg kept no copy of, undo says so and changes nothing.
 
 ## Where packages come from
 

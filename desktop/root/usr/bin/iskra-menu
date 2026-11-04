@@ -68,8 +68,8 @@ Wiki page…	iskra-menu wikipage
 Search the lessons and the wiki…	iskra-menu search
 System map (what is running)	iskra-term 'System map' sh -c 'iskra-learn doctor; read -r -p "Enter to close " _'
 Explain a command…	iskra-menu explain
-CRUX handbook (offline)	iskra-handbook
-CRUX handbook and the wiki, side by side (mc)	iskra-handbook mc
+Slackware book (offline)	iskra-handbook
+Slackware book and the wiki, side by side (mc)	iskra-handbook mc
 Manual page…	iskra-menu manual
 Where things come from	iskra-term Sources sh -c 'iskra-learn sources | less'
 M

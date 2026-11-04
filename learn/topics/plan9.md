@@ -1,9 +1,10 @@
 # Plan 9 tools: acme, sam, rc and the plumber
 
 Plan 9 was Bell Labs' successor to Unix, by the same people. plan9port brings its tools to
-Linux; Iskra's plan9port port builds it on this laptop and installs it in /usr/lib/plan9.
-/etc/profile.d/plan9.sh sets PLAN9=/usr/lib/plan9 and adds $PLAN9/bin to the end of PATH
-for every login shell, so the Linux commands of the same name (rc, man, sam) still come first.
+Linux; Iskra's repository has it ready-made, built from Ponce's SlackBuild, which installs it
+in /opt/plan9. /etc/profile.d/plan9port.sh sets PLAN9=/opt/plan9 and adds $PLAN9/bin to the end
+of PATH (and its manuals to MANPATH) for every login shell, so the Linux commands of the same
+name (rc, man, sam) still come first.
 Run Plan 9's with the "9" wrapper:  9 acme,  9 man rc.  iskra-acme and iskra-plumb set
 PLAN9 and PATH for themselves.
 

@@ -17,8 +17,8 @@ material is downloaded. Ctrl+Super+r opens its menu.
 Everything goes to /var/lib/iskra/russian. Interrupted downloads resume.
 
 ## The tutor
-The engine is llama.cpp's llama-server (Iskra's llama-cpp port, built here for this
-processor), run by /etc/rc.d/iskra-tutor, a service in /etc/rc.conf: as the user nobody,
+The engine is llama.cpp's llama-server (Iskra's llama.cpp package), run by
+/etc/rc.d/iskra-tutor, which rc.iskra starts at boot: as the user nobody,
 listening on 127.0.0.1:11434 only, logging to /var/log/iskra-tutor.log. At boot it starts
 only once the model is on disk.
     sudo iskra-content install ai-tutor
@@ -33,5 +33,5 @@ the memory back.
 Alt+Shift switches to Russian phonetic, where letters sit on their Latin look-alikes and
 sound-alikes: я on q, в on w, е on e, ж on v. See the whole layout with:  setxkbmap -print -layout ru -variant phonetic
 
-Dictionaries open through kiwix-serve (the kiwix-tools port), a small web server on this computer only
+Dictionaries open through kiwix-serve (the kiwix-tools package), a small web server on this computer only
 (127.0.0.1), in Firefox.

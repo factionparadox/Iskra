@@ -1,28 +1,55 @@
 #!/bin/sh
-# The CRUX handbook, offline, beside the Iskra wiki.
-#   iskra-handbook          the handbook in less (/ searches, q quits)
-#   iskra-handbook mc       Midnight Commander: the handbook and the Iskra wiki side by side
-#   iskra-handbook notes    CRUX 3.8's release notes
-#   iskra-handbook update   fetch the newest handbook from crux.nu and keep it offline
-#                           (iskra-update and the installer do this too)
-# The handbook from the install stick stays as handbook-stick.txt, in case crux.nu is down.
-dir=/usr/share/doc/crux
-url=https://crux.nu/Main/Handbook3-8
-book=$dir/handbook.txt
-[ -f "$book" ] || book=$dir/handbook-stick.txt
+# The Slackware book ("Slackware Linux Essentials"), offline, beside the Iskra wiki.
+#   iskra-handbook          the book in less (/ searches, q quits)
+#   iskra-handbook mc       Midnight Commander: the book and the Iskra wiki side by side
+#   iskra-handbook notes    Slackware -current's ChangeLog: what changed, newest first
+#   iskra-handbook update   fetch the newest book from docs.slackware.com, and the ChangeLog,
+#                           and keep them offline (iskra-update does this too)
+# The book is the slackbook pages of docs.slackware.com, one chapter a page, each fetched as
+# plain HTML (?do=export_xhtml) and turned into text by /usr/lib/iskra/handbook-text.
+dir=/usr/share/doc/slackbook
+site=https://docs.slackware.com
+changelog=https://slackware.uk/slackware/slackware64-current/ChangeLog.txt
+book=$dir/slackbook.txt
+nocopy() {   # what to say when there is no offline copy yet
+	exec iskra-term "$1" sh -c "echo 'There is no offline copy of the $1 yet. It needs the internet, once:'
+echo '  sudo iskra-handbook update'
+echo 'Online: $2'
+read -r -p 'Enter to close ' _"
+}
 case "${1:-read}" in
-	read)  exec iskra-term "CRUX handbook" less "$book" ;;
-	notes) exec iskra-term "CRUX 3.8 release notes" less "$dir/releasenotes.txt" ;;
+	read)  [ -f "$book" ] || nocopy "Slackware book" "$site/slackbook:start"
+	       exec iskra-term "Slackware book" less "$book" ;;
+	notes) [ -f "$dir/ChangeLog.txt" ] || nocopy "Slackware ChangeLog" "$changelog"
+	       exec iskra-term "Slackware ChangeLog" less "$dir/ChangeLog.txt" ;;
 	mc)    exec iskra-term "Handbook" mc /usr/share/iskra/learn/wiki "$dir" ;;
 	update)
 		[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+		mkdir -p "$dir"
 		tmp=$(mktemp -d)
-		if curl -fsSL -m 60 -o "$tmp/page.html" "$url" &&
-		   python3 -I /usr/lib/iskra/handbook-text "$tmp/page.html" "$tmp/handbook.txt"; then
-			install -m644 "$tmp/handbook.txt" "$dir/handbook.txt"
-			echo "The CRUX handbook is up to date ($(wc -l < "$dir/handbook.txt") lines, from $url)."
+		ok=yes
+		# the chapters, in the book's order, from its contents page
+		if curl -fsSL -m 60 -o "$tmp/start.txt" "$site/slackbook:start?do=export_raw"; then
+			n=0
+			for c in $(sed -n 's/.*\[\[slackbook:\([a-z0-9_]*\)|.*/\1/p' "$tmp/start.txt"); do
+				n=$((n + 1))
+				curl -fsSL -m 90 -o "$tmp/$(printf %02d $n)-$c.html" "$site/slackbook:$c?do=export_xhtml" || { ok=no; break; }
+			done
+			[ "$n" -gt 0 ] || ok=no
 		else
-			echo "Couldn't fetch the handbook from $url; the offline copy stays as it was."
+			ok=no
+		fi
+		if [ $ok = yes ] && python3 -I /usr/lib/iskra/handbook-text "$tmp/slackbook.txt" "$tmp"/[0-9]*.html; then
+			install -m644 "$tmp/slackbook.txt" "$book"
+			echo "The Slackware book is up to date ($n chapters, $(wc -l < "$book") lines, from $site)."
+		else
+			echo "Couldn't fetch the Slackware book from $site; the offline copy stays as it was."
+		fi
+		if curl -fsSL -m 300 -o "$tmp/ChangeLog.txt" "$changelog" && head -n 1 "$tmp/ChangeLog.txt" | grep -q UTC; then
+			install -m644 "$tmp/ChangeLog.txt" "$dir/ChangeLog.txt"
+			echo "Slackware's ChangeLog is up to date (newest entry: $(head -n 1 "$dir/ChangeLog.txt"))."
+		else
+			echo "Couldn't fetch Slackware's ChangeLog; the offline copy stays as it was."
 		fi
 		rm -rf "$tmp" ;;
 	*) echo "usage: iskra-handbook [read|mc|notes|update]" >&2; exit 2 ;;

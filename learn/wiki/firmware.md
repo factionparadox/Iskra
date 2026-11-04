@@ -1,29 +1,30 @@
 # Firmware and microcode
 
-## Device firmware: linux-firmware
+## Device firmware: kernel-firmware
 Many devices load a firmware file from the disk when their driver starts: Intel graphics,
-Wi-Fi (iwlwifi), Bluetooth, the audio DSP and more. The linux-firmware package has the whole
-collection in /lib/firmware; the stick installed it ready-built with the kernel, so the Wi-Fi
-works on the first boot. A missing file shows in dmesg:
+Wi-Fi (iwlwifi), Bluetooth, the audio DSP and more. Slackware's kernel-firmware package has the
+whole collection in /lib/firmware, so the Wi-Fi works on the first boot. A missing file shows in
+dmesg:
   sudo dmesg | grep -i firmware      ("failed to load" names the file)
-  pkginfo -o lib/firmware/iwlwifi    which package has a file
-A newer linux-firmware arrives with iskra-update like any port; it is used from the next
-boot (or the next time the driver loads).
+  grep -l 'lib/firmware/iwlwifi' /var/lib/pkgtools/packages/*    which package has it
+A newer kernel-firmware arrives with iskra-update; it is used from the next boot (or the next
+time the driver loads).
 
 ## CPU microcode
 Intel's corrections to the processor itself, loaded at every boot before anything else (they
-do not change the chip permanently). The intel-ucode package holds them; dracut's
---early-microcode puts them at the front of the initramfs. A new version needs the initramfs
-remade (the linux port does it whenever the kernel is rebuilt; by hand, see: boot).
+do not change the chip permanently). Slackware's intel-microcode package puts them in
+/boot/intel-ucode.img, and GRUB loads that file before the kernel (grub-mkconfig adds it to every
+menu entry it finds it for). A new version is used from the next boot.
   dmesg | grep -i microcode        "microcode updated early to revision ..."
 
 ## The laptop's own firmware
-fwupd (from contrib) reads the LVFS, where Framework publishes BIOS updates: the System menu's
-"Firmware updates" runs  sudo fwupdtool refresh ; sudo fwupdtool get-updates. Framework also
-publishes them as files with their own instructions:  https://knowledgebase.frame.work/
+Framework publishes BIOS updates on the LVFS (for fwupd) and as files with their own
+instructions:  https://knowledgebase.frame.work/
+fwupd isn't part of Slackware; if you install it, the System menu's "Firmware updates" entry
+appears and runs  sudo fwupdtool refresh ; sudo fwupdtool get-updates.
 
 ## framework_tool
-Framework's own tool (from framework-system; Iskra's framework-tool port installs Framework's
+Framework's own tool (from framework-system; Iskra's framework-tool package installs Framework's
 release build) talks to the embedded controller. It needs root:
   sudo framework_tool --versions              BIOS, EC and other firmware versions
   sudo framework_tool --power                 battery and charger
@@ -34,5 +35,5 @@ release build) talks to the embedded controller. It needs root:
 The menu's System list has the keyboard light, touchscreen and click force.
 framework_tool --help lists the rest.
 
-See also: boot (microcode in the initramfs), kernel, framework, graphics ;
+See also: boot (microcode), kernel, framework, graphics ;
 https://github.com/FrameworkComputer/framework-system

@@ -42,15 +42,18 @@ install_any() {   # Slackware's repositories first; anything they don't have, fr
     # slpkg follows requirements only within one repository; Iskra's packages need Slackware's,
     # so sparkpkg works out the whole set across all of them
     mapfile -t slack < <("$LIB/assimilate" expand "${slack[@]}")
+    "$LIB/assimilate" snapshot install "${slack[@]}" "${other[@]}" || exit
     slpkg install -o all "${yes[@]}" "${slack[@]}" || exit
   fi
   if [[ ${#other[@]} -gt 0 ]]; then
     echo; echo "Not packaged for Slackware: ${other[*]}. sparkpkg will build them from Arch's or the AUR's recipes."
+    [[ ${#slack[@]} -gt 0 ]] || "$LIB/assimilate" snapshot install "${other[@]}" || exit
     "$LIB/assimilate" run "${yes[@]}" "${other[@]}"
   fi
 }
 
 upgrade_all() {
+  "$LIB/assimilate" snapshot upgrade || exit
   slpkg upgrade -o all "$@" || exit
   local old; old=$("$LIB/assimilate" outdated) || return
   [[ -n $old ]] || return 0
@@ -98,7 +101,8 @@ sparkpkg: Iskra's packages.
   $ME sync                fetch the repositories' latest package lists (upgrade does it too)
   $ME search WORD         look in every repository, Arch and the AUR
   $ME info NAME           what NAME is, and where it would come from
-  $ME undo                undo the last install, upgrade or removal
+  $ME undo                put things back as they were before the last install, upgrade or
+                          removal (sparkpkg keeps a copy of whatever that change replaced)
   $ME history             what was installed, upgraded and removed, and when
 
   $ME aur NAME...         build and install from the AUR, even if Slackware has a package
@@ -119,7 +123,7 @@ case $cmd in
   tools)          tools ;;
   sync|update)    root sync "$@"; keys; slpkg update "$@" ;;
   install|i|add)  root install "$@"; keys; install_any "$@" ;;
-  remove|rm|del)  root remove "$@"; slpkg remove "$@" ;;
+  remove|rm|del)  root remove "$@"; "$LIB/assimilate" snapshot remove "${@/#-*/}" || exit; slpkg remove "$@" ;;
   upgrade|up)     root upgrade "$@"; keys; slpkg update && upgrade_all "$@" ;;
   search|s)       [[ $# -gt 0 ]] || die "search for what?"
                   echo "== Slackware and its repositories"; slpkg search -o all "$@"
@@ -131,10 +135,12 @@ case $cmd in
                       *) "$LIB/assimilate" info "$n" ;;
                     esac
                   done ;;
-  undo|rollback)  root undo "$@"; slpkg rollback "$@" ;;
+  undo|rollback)  root undo "$@"; "$LIB/assimilate" undo "$@" ;;
   history)        slpkg history "$@" ;;
-  aur)            root aur "$@"; keys; SPARKPKG_FROM=aur "$LIB/assimilate" run "$@" ;;
-  arch)           root arch "$@"; keys; SPARKPKG_FROM=arch "$LIB/assimilate" run "$@" ;;
+  aur)            root aur "$@"; keys; "$LIB/assimilate" snapshot install "${@/#-*/}" || exit
+                  SPARKPKG_FROM=aur "$LIB/assimilate" run "$@" ;;
+  arch)           root arch "$@"; keys; "$LIB/assimilate" snapshot install "${@/#-*/}" || exit
+                  SPARKPKG_FROM=arch "$LIB/assimilate" run "$@" ;;
   convert)        root convert "$@"; "$LIB/assimilate" make "$@" ;;
   why)            slpkg why "$@" ;;
   orphans)        slpkg orphans "$@" ;;

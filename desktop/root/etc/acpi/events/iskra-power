@@ -1,0 +1,3 @@
+# Iskra: the power button: sleep
+event=button[ /]power.*
+action=/usr/bin/iskra-sleep power

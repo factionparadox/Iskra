@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Iskra Learn: offline lessons about this system, read-only inspection, manuals.
 
-From Archon/Iskra's learning tool, rewritten for Iskra on CRUX 3.8 (BSD-style rc scripts,
-ports and prt-get, XFS, ratpoison, Plan 9). It never runs a command it explains and never asks
-for root.
+From Archon/Iskra's learning tool, rewritten for Iskra on Slackware64 -current (BSD-style rc
+scripts, sparkpkg and slpkg over Slackware's pkgtools, XFS, ratpoison, Plan 9). It never runs a
+command it explains and never asks for root.
 """
 import argparse
 import os
@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import webbrowser
 
 
@@ -30,34 +31,35 @@ def doc_root():
 
 
 DOC_ROOT = doc_root()
-HANDBOOK = Path("/usr/share/doc/crux/handbook.txt")
-CRUX_WEB = "https://crux.nu/"
-RC_CONF = Path("/etc/rc.conf")
+HANDBOOK = Path("/usr/share/doc/slackbook/slackbook.txt")
+BOOK_WEB = "https://docs.slackware.com/slackbook:start"
 RC_D = Path("/etc/rc.d")
-PRT_GET_CONF = Path("/etc/prt-get.conf")
-PKG_DB = Path("/var/lib/pkg/db")
-REPO = Path("/usr/src/iskra")
+RC_ISKRA = RC_D / "rc.iskra"
+SLPKG_REPOS = Path("/etc/slpkg/repositories.toml")
+PKG_DB = Path("/var/lib/pkgtools/packages")
+SLPKG_HISTORY = Path("/var/log/slpkg/history.log")
 TOPIC_NAME = re.compile(r"[a-z][a-z0-9-]{0,60}\Z")
 MAN_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,70}\Z")
 # command (or "COMMAND WORD", "COMMAND -FLAG") -> lesson (iskra-learn learn TOPIC)
 ALIASES = {
-    "prt-get": "packages", "prt-get depinst": "packages", "prt-get install": "packages",
-    "prt-get update": "packages", "prt-get remove": "packages", "prt-get search": "packages",
-    "prt-get dsearch": "packages", "prt-get info": "packages", "prt-get diff": "packages",
-    "prt-get quickdep": "packages", "prt-get deptree": "packages", "prt-get lock": "packages",
-    "prt-get listinst": "packages", "prt-get path": "ports", "prt-get sysup": "first-steps",
-    "pkgadd": "packages", "pkgadd -u": "recovery", "pkgrm": "packages", "pkginfo": "packages",
-    "rejmerge": "first-steps", "pkgmk": "building", "revdep": "recovery",
-    "ports": "ports", "ports -u": "ports", "iskra-ports": "ports",
+    "sparkpkg": "packages", "sparkpkg install": "packages", "sparkpkg remove": "packages",
+    "sparkpkg search": "packages", "sparkpkg info": "packages", "sparkpkg why": "packages",
+    "sparkpkg orphans": "packages", "sparkpkg history": "packages", "sparkpkg aur": "packages",
+    "sparkpkg arch": "packages", "sparkpkg convert": "packages", "sparkpkg tools": "packages",
+    "sparkpkg upgrade": "first-steps", "sparkpkg sync": "repositories",
+    "sparkpkg undo": "recovery", "slpkg": "packages", "slpkg update": "repositories",
+    "slpkg upgrade": "first-steps", "slpkg pin": "recovery", "slpkg rollback": "recovery",
+    "slpkg check-broken": "recovery",
+    "installpkg": "packages", "upgradepkg": "packages", "removepkg": "packages",
+    "makepkg": "packages", "explodepkg": "packages", "pkgtool": "packages",
     "iskra-update": "first-steps", "iskra-install": "install",
-    "port-help": "packages", "port-aurum": "packages", "port-undo": "packages",
     "rc.d": "services", "init": "services", "telinit": "services", "halt": "services",
     "shutdown": "services", "reboot": "services", "poweroff": "services",
-    "start-stop-daemon": "services", "crond": "services", "crontab": "services",
-    "chronyc": "services",
+    "crond": "services", "crontab": "services", "chronyc": "services",
     "iskra-sleep": "power", "acpid": "power", "acpi_listen": "power", "rtcwake": "power",
     "tlp": "power", "tlp-stat": "power", "powertop": "power", "brightnessctl": "power",
-    "iskra-sleepcheck": "power", "iskra-battery": "power",
+    "iskra-sleepcheck": "power", "iskra-battery": "power", "loginctl": "power",
+    "thermald": "power", "intel_lpmd": "power",
     "framework_tool": "hardware", "lspci": "hardware", "lsusb": "hardware",
     "swapon": "storage", "lsblk": "storage", "findmnt": "storage", "blkid": "storage",
     "mount": "storage", "umount": "storage", "mkfs.xfs": "storage", "xfs_info": "storage",
@@ -68,9 +70,10 @@ ALIASES = {
     "networkmanager_dmenu": "network", "protonvpn-app": "network",
     "nft": "security", "ss": "security", "passwd": "security", "sudo": "security",
     "useradd": "security", "usermod": "security", "visudo": "security",
-    "grub-install": "boot", "grub-mkconfig": "boot", "efibootmgr": "boot", "dracut": "boot",
+    "iskra-fingerprint": "security", "fprintd-enroll": "security",
+    "grub-install": "boot", "grub-mkconfig": "boot", "efibootmgr": "boot", "mkinitrd": "boot",
     "uname": "kernel", "dmesg": "kernel", "lsmod": "kernel", "modprobe": "kernel",
-    "modinfo": "kernel",
+    "modinfo": "kernel", "make-kernel-backup": "kernel",
     "man": "manuals", "apropos": "manuals", "info": "manuals", "iskra-handbook": "manuals",
     "iskra-learn": "manuals",
     "ratpoison": "ratpoison", "iskra-width": "ratpoison", "iskra-overview": "ratpoison",
@@ -87,37 +90,48 @@ ALIASES = {
     "iskra-russian": "russian", "iskra-content": "russian", "llama-server": "russian",
     "kiwix-serve": "russian",
     "chroot": "recovery",
-    # Guix's names, from before Iskra moved to CRUX, so they still lead somewhere
-    "guix": "packages", "guix pull": "ports", "guix system": "architecture",
-    "guix system roll-back": "recovery", "herd": "services", "loginctl": "power",
+    # the commands of the systems Iskra was built on before (CRUX, Guix, Void), so they still
+    # lead somewhere: see OLD_COMMANDS
+    "prt-get": "packages", "pkgadd": "packages", "pkgrm": "packages", "pkginfo": "packages",
+    "pkgmk": "packages", "ports": "repositories", "rejmerge": "first-steps",
+    "guix": "packages", "herd": "services", "xbps-install": "packages", "sv": "services",
 }
 # commands whose wiki page goes deeper than the lesson (iskra-learn wiki PAGE)
 WIKI_FOR = {
-    "port-help": "iskra-tools", "port-aurum": "iskra-tools", "port-undo": "iskra-tools",
-    "iskra-fingerprint": "iskra-tools", "iskra-wifi": "iskra-tools", "aur": "iskra-tools",
-    "makepkg": "iskra-tools", "pkgbuild": "iskra-tools", "fprintd": "iskra-tools",
-    "iskra-handbook": "handbook",
-    "prt-get": "prt-get", "iskra-update": "prt-get", "revdep": "prt-get",
-    "prt-get path": "ports",
-    "pkgadd": "pkgutils", "pkgrm": "pkgutils", "pkginfo": "pkgutils", "rejmerge": "pkgutils",
-    "pkgmk": "pkgfiles", "pkgfile": "pkgfiles", "footprint": "pkgfiles", ".footprint": "pkgfiles",
-    "sha256": "pkgfiles", "port": "pkgfiles",
-    "ports": "ports", "iskra-ports": "ports", "collections": "ports", "prt-get.conf": "ports",
-    "rc.d": "rc", "init": "rc", "telinit": "rc", "services": "rc", "start-stop-daemon": "rc",
-    "shutdown": "rc", "halt": "rc", "rc.multi": "rc",
-    "rc.conf": "rc-conf", "fstab": "rc-conf", "inittab": "rc-conf",
+    "sparkpkg": "sparkpkg", "sparkpkg aur": "sparkpkg", "sparkpkg arch": "sparkpkg",
+    "sparkpkg convert": "sparkpkg", "sparkpkg undo": "sparkpkg", "aur": "sparkpkg",
+    "pkgbuild": "sparkpkg", "names.tsv": "sparkpkg",
+    "slpkg": "slpkg", "slpkg pin": "slpkg", "slpkg rollback": "slpkg", "slpkg.toml": "slpkg",
+    "blacklist.toml": "slpkg", "pin": "slpkg",
+    "slpkg update": "repositories", "sparkpkg sync": "repositories",
+    "repositories.toml": "repositories", "fingerprints": "repositories",
+    "alien": "repositories", "conraid": "repositories", "multilib": "repositories",
+    "installpkg": "pkgtools", "upgradepkg": "pkgtools", "removepkg": "pkgtools",
+    "makepkg": "pkgtools", "explodepkg": "pkgtools", "pkgtool": "pkgtools", ".new": "pkgtools",
+    "txz": "pkgtools",
+    "slackbuild": "slackbuilds", "slackbuilds": "slackbuilds", ".info": "slackbuilds",
+    "ponce": "slackbuilds", "sbo": "slackbuilds", "slack-desc": "slackbuilds",
+    "iskra-update": "iskra-tools", "iskra-fingerprint": "iskra-tools", "iskra-tools": "iskra-tools",
+    "iskra-handbook": "handbook", "handbook": "handbook", "slackbook": "handbook",
+    "rc.d": "rc", "init": "rc", "telinit": "rc", "services": "rc", "shutdown": "rc", "halt": "rc",
+    "rc.M": "rc", "rc.S": "rc", "rc.K": "rc", "rc.6": "rc", "rc.iskra": "rc",
+    "rc.m": "rc", "rc.s": "rc", "rc.k": "rc",
+    "rc.local": "system-files", "rc.local_shutdown": "system-files", "inittab": "system-files",
+    "fstab": "system-files", "hostname": "system-files",
     "dmesg": "logging", "syslog": "logging", "syslogd": "logging",
     "iskra-sleep": "sleep", "acpid": "sleep", "acpi_listen": "sleep", "rtcwake": "sleep",
-    "suspend": "sleep", "hibernate": "sleep", "hibernation": "sleep",
+    "suspend": "sleep", "hibernate": "sleep", "hibernation": "sleep", "elogind": "sleep",
+    "loginctl": "sleep", "logind.conf": "sleep",
     "modprobe": "kernel", "lsmod": "kernel", "uname": "kernel", "modinfo": "kernel",
-    "linux": "kernel",
+    "linux": "kernel", "kernel-generic": "kernel", "make-kernel-backup": "kernel",
     "grub-install": "boot", "grub-mkconfig": "boot", "efibootmgr": "boot", "grub": "boot",
-    "dracut": "boot", "initramfs": "boot",
+    "mkinitrd": "boot", "initrd": "boot", "initramfs": "boot", "microcode": "boot",
     "passwd": "users", "sudo": "users", "groups": "users", "id": "users", "useradd": "users",
-    "usermod": "users", "visudo": "users", "pam": "users",
+    "usermod": "users", "visudo": "users", "pam": "users", "fprintd": "users",
+    "fprintd-enroll": "users",
     "chronyd": "time", "chronyc": "time", "crond": "time", "crontab": "time", "date": "time",
-    "locale": "locale", "localedef": "locale", "setxkbmap": "locale", "setfont": "locale",
-    "loadkeys": "locale",
+    "locale": "locale", "setxkbmap": "locale", "setfont": "locale", "loadkeys": "locale",
+    "timeconfig": "locale",
     "fstrim": "filesystems", "mkfs.xfs": "filesystems", "xfs_repair": "filesystems",
     "xfs_growfs": "filesystems", "lsblk": "filesystems", "mount": "filesystems",
     "udisksctl": "filesystems", "udiskie": "filesystems",
@@ -127,34 +141,31 @@ WIKI_FOR = {
     "wpctl": "sound", "pipewire": "sound", "pamixer": "sound", "wireplumber": "sound",
     "pulsemixer": "sound",
     "vainfo": "graphics", "xrandr": "graphics",
-    "framework_tool": "firmware", "iskra-sleepcheck": "framework",
-    "iskra-handbook": "handbook", "handbook": "handbook",
+    "framework_tool": "firmware", "kernel-firmware": "firmware", "intel-microcode": "firmware",
+    "iskra-sleepcheck": "framework",
     "pacman": "from-arch", "systemctl": "from-arch", "journalctl": "from-arch",
-    "mkinitcpio": "from-arch", "makepkg": "from-arch", "yay": "from-arch",
-    # the old pages' names and Guix's, from before Iskra moved to CRUX
-    "guix-packages": "prt-get", "guix-packaging": "pkgfiles", "guix-tools": "pkgutils",
-    "shepherd": "rc", "system": "rc-conf", "channels": "ports", "elogind": "sleep",
-    "guix": "from-arch", "guix pull": "ports", "guix build": "pkgfiles", "herd": "rc",
-    "loginctl": "sleep", "config.scm": "rc-conf", "generations": "prt-get",
-    # Void's names, from before that, likewise
-    "xbps-install": "prt-get", "xbps-query": "prt-get", "xbps-remove": "prt-get",
-    "xbps": "prt-get", "sv": "rc", "runit": "rc", "xbps-src": "pkgfiles", "xtools": "pkgutils",
-    "repositories": "ports",
+    "mkinitcpio": "from-arch", "yay": "from-arch", "paru": "from-arch",
+    # the old pages' names, and the commands of the systems Iskra was built on before
+    "prt-get": "sparkpkg", "pkgutils": "pkgtools", "pkgfiles": "slackbuilds",
+    "ports": "repositories", "rc-conf": "system-files", "rc.conf": "system-files",
+    "pkgadd": "pkgtools", "pkgrm": "pkgtools", "pkginfo": "pkgtools", "pkgmk": "slackbuilds",
+    "rejmerge": "pkgtools", "guix": "from-arch", "herd": "rc", "shepherd": "rc",
+    "xbps-install": "sparkpkg", "xbps-src": "slackbuilds", "sv": "rc", "runit": "rc",
 }
 MANUALS = {
-    "port-help": "port-help ; less /usr/bin/port-help",
-    "port-aurum": "less /usr/bin/port-aurum ; port-help port-aurum",
-    "port-undo": "less /usr/bin/port-undo ; port-help port-undo",
+    "sparkpkg": "sparkpkg help ; sparkpkg tools ; iskra-learn wiki sparkpkg",
+    "iskra-update": "less /usr/bin/iskra-update ; sparkpkg help",
+    "slpkg": "man 1 slpkg", "installpkg": "man 8 installpkg", "upgradepkg": "man 8 upgradepkg",
+    "removepkg": "man 8 removepkg", "makepkg": "man 8 makepkg", "explodepkg": "man 8 explodepkg",
+    "pkgtool": "man 8 pkgtool",
     "iskra-fingerprint": "less /usr/bin/iskra-fingerprint ; man fprintd-enroll",
-    "iskra-wifi": "less /usr/bin/iskra-wifi ; man wpa_cli",
-    "prt-get": "man 8 prt-get", "iskra-update": "man 8 prt-get ; man 8 ports ; iskra-handbook",
-    "ports": "man 8 ports", "pkgadd": "man 8 pkgadd", "pkgrm": "man 8 pkgrm",
-    "pkginfo": "man 8 pkginfo", "pkgmk": "man 8 pkgmk ; man 5 pkgmk.conf",
-    "rejmerge": "man 8 rejmerge", "iskra-ports": "less /usr/src/iskra/build/iskra-ports",
     "rc.d": "man 8 init ; man 5 inittab ; iskra-handbook", "init": "man 8 init",
-    "start-stop-daemon": "man 8 start-stop-daemon", "acpid": "man 8 acpid",
-    "iskra-sleep": "less /usr/bin/iskra-sleep ; man 8 acpid",
-    "iskra-handbook": "less " + str(HANDBOOK), "dracut": "man 8 dracut",
+    "telinit": "man 8 telinit", "acpid": "man 8 acpid",
+    "iskra-sleep": "less /usr/bin/iskra-sleep ; man 5 logind.conf",
+    "loginctl": "man 1 loginctl ; man 5 logind.conf",
+    "iskra-handbook": "less " + str(HANDBOOK),
+    "mkinitrd": "man 8 mkinitrd ; less /boot/README.initrd",
+    "make-kernel-backup": "less /boot/make-kernel-backup",
     "nmtui": "man 1 nmtui", "nmcli": "man 1 nmcli", "nft": "man 8 nft",
     "lsblk": "man 8 lsblk", "findmnt": "man 8 findmnt", "mkfs.xfs": "man 8 mkfs.xfs",
     "xfs_repair": "man 8 xfs_repair", "grub-install": "man 8 grub-install", "man": "man 1 man",
@@ -163,20 +174,34 @@ MANUALS = {
     "mc": "man 1 mc", "tlp": "man 8 tlp", "chronyc": "man 1 chronyc", "crontab": "man 1 crontab",
     "framework_tool": "framework_tool --help", "info": "info info",
     "acme": "9 man 1 acme", "sam": "9 man 1 sam", "rc": "9 man 1 rc", "plumber": "9 man 4 plumber",
-    "guix": "iskra-learn wiki from-arch", "herd": "iskra-learn wiki rc",
-    "loginctl": "iskra-learn wiki sleep",
+}
+# commands of the systems Iskra was built on before, and what does their job now
+OLD_COMMANDS = {
+    "prt-get": "sparkpkg (install, remove, upgrade, search, info)",
+    "pkgadd": "installpkg, or upgradepkg --install-new",
+    "pkgrm": "removepkg (or sparkpkg remove)",
+    "pkginfo": "ls /var/lib/pkgtools/packages ; slpkg list-files NAME",
+    "pkgmk": "a SlackBuild, which ends with makepkg (iskra-learn wiki slackbuilds)",
+    "ports": "sparkpkg sync",
+    "rejmerge": "the .new files beside your own (iskra-update lists them)",
+    "guix": "sparkpkg", "herd": "the scripts in /etc/rc.d", "shepherd": "the scripts in /etc/rc.d",
+    "xbps-install": "sparkpkg", "sv": "the scripts in /etc/rc.d",
 }
 SOURCES = (
-    ("The CRUX handbook (offline)", f"iskra-handbook   (or: less {HANDBOOK})"),
-    ("CRUX: the handbook, FAQ, wiki and mailing lists (online)", CRUX_WEB),
-    ("CRUX ports, every collection, searchable", "https://crux.nu/portdb/"),
-    ("CRUX's ports and tools, in Git", "https://git.crux.nu/"),
-    ("Manual pages for the package tools", "man prt-get ; man ports ; man pkgmk ; man pkgadd"),
-    ("Iskra's ports (Pkgfiles and sha256 files)", "/usr/src/iskra/ports  (or: /usr/ports/iskra)"),
-    ("The Linux kernel (the linux port's source)", "https://www.kernel.org/"),
+    ("The Slackware book (offline)", f"iskra-handbook   (or: less {HANDBOOK})"),
+    ("The Slackware book (online), and SlackDocs: HOWTOs by Slackware's users", BOOK_WEB),
+    ("Slackware", "https://www.slackware.com/"),
+    ("Slackware -current's ChangeLog: what changed, and why",
+     "iskra-handbook notes   (online: https://slackware.uk/slackware/slackware64-current/ChangeLog.txt)"),
+    ("Manual pages for the package tools",
+     "man installpkg ; man upgradepkg ; man removepkg ; man makepkg ; man slpkg"),
+    ("sparkpkg, Iskra's package manager", "sparkpkg help ; iskra-learn wiki sparkpkg"),
+    ("slpkg", "https://dslackw.gitlab.io/slpkg/"),
+    ("SlackBuilds: slackbuilds.org, and Ponce's for -current",
+     "https://slackbuilds.org/ ; https://github.com/Ponce/slackbuilds (branch current)"),
+    ("AlienBOB's packages (LibreOffice, Chromium, Wine, multilib)", "https://slackware.nl/people/alien/"),
+    ("conraid's packages", "https://slackers.it/repository/"),
     ("Linux kernel documentation", "https://docs.kernel.org/"),
-    ("Arch Linux's kernel configuration (the linux port's base.config)",
-     "https://gitlab.archlinux.org/archlinux/packaging/packages/linux"),
     ("framework_tool (framework-system)", "https://github.com/FrameworkComputer/framework-system"),
     ("ratpoison manual", "https://www.nongnu.org/ratpoison/doc/"),
     ("Plan 9 from User Space (plan9port)", "https://9fans.github.io/plan9port/"),
@@ -185,7 +210,7 @@ SOURCES = (
     ("polybar wiki", "https://github.com/polybar/polybar/wiki"),
     ("PipeWire documentation", "https://docs.pipewire.org/"),
     ("XFS documentation", "https://docs.kernel.org/admin-guide/xfs.html"),
-    ("Iskra source (the installer, the ports, the desktop)", "https://github.com/factionparadox/Iskra"),
+    ("Iskra source (the packages, the installer, the desktop)", "https://github.com/factionparadox/Iskra"),
 )
 
 
@@ -217,8 +242,8 @@ def learn(name=None):
             print(f"  {key:<16} {heading}")
         print("\nRead: iskra-learn learn packages")
         print("Browse: iskra-learn browse")
-        print("The wiki (CRUX in depth): iskra-learn wiki ; search: iskra-learn search WORD")
-        print("Explain without running: iskra-learn explain \"sudo prt-get depinst gimp\"")
+        print("The wiki (Slackware in depth): iskra-learn wiki ; search: iskra-learn search WORD")
+        print("Explain without running: iskra-learn explain \"sudo sparkpkg install gimp\"")
         return 0
     page = read_topic(name)
     if page is None:
@@ -307,11 +332,21 @@ def browse():
             return 0
 
 
-def lookup_key(tokens):
-    """The table keys for a command line, most specific first: "pkgadd -u", "prt-get sysup",
-    "guix system roll-back", then the command's own name. A service script (/etc/rc.d/NAME)
-    is "rc.d"."""
+def rc_script(tokens):
+    """The service script a command line is about: /etc/rc.d/NAME run directly, or given to
+    chmod (which switches it on or off at boot). None otherwise."""
     if tokens[0].startswith(str(RC_D) + "/"):
+        return tokens[0]
+    if Path(tokens[0]).name == "chmod":
+        return next((t for t in tokens[1:] if t.startswith(str(RC_D) + "/")), None)
+    return None
+
+
+def lookup_key(tokens):
+    """The table keys for a command line, most specific first: "sparkpkg install",
+    "upgradepkg --install-new", then the command's own name. A service script (/etc/rc.d/NAME),
+    run or given to chmod, is "rc.d"."""
+    if rc_script(tokens):
         return ["rc.d"]
     command = Path(tokens[0]).name.lower()
     words = [t for t in tokens[1:] if not t.startswith("-")]
@@ -330,70 +365,111 @@ def first(table, keys):
     return next((table[k] for k in keys if k in table), None)
 
 
-def rc_services():
-    """The SERVICES list in /etc/rc.conf, in order (empty if there is no such file)."""
+def executable(path):
+    return Path(path).is_file() and os.access(path, os.X_OK)
+
+
+def iskra_services():
+    """The SERVICES list at the top of /etc/rc.d/rc.iskra, in order (empty if there is none)."""
     try:
-        text = RC_CONF.read_text(encoding="utf-8", errors="replace")
+        text = RC_ISKRA.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    text = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
-    found = re.search(r"^\s*SERVICES=\((.*?)\)", text, re.M | re.S)
+    found = re.search(r'^SERVICES="([^"]*)"', text, re.M)
     return found.group(1).split() if found else []
+
+
+# Iskra's own services, by their names in rc.iskra: (their script, or the program rc.iskra
+# starts itself; the process they leave running, None for a one-off at boot)
+ISKRA_SERVICE = {
+    "firewall": ("/etc/rc.d/iskra-firewall", None),
+    "tlp": ("/etc/rc.d/rc.tlp", None),
+    "thermald": ("/usr/sbin/thermald", "thermald"),
+    "lpmd": ("/usr/bin/intel_lpmd", "intel_lpmd"),
+    "chrony": ("/etc/rc.d/rc.chrony", "chronyd"),
+    "tutor": ("/etc/rc.d/iskra-tutor", "llama-server"),
+}
+# Slackware's own services that Iskra relies on, started by rc.M: (script, process)
+SLACKWARE_SERVICES = (
+    ("rc.syslog", "syslogd"), ("rc.udev", "udevd"), ("rc.messagebus", "dbus-daemon"),
+    ("rc.elogind", "elogind"), ("rc.networkmanager", "NetworkManager"),
+    ("rc.bluetooth", "bluetoothd"), ("rc.acpid", "acpid"), ("rc.crond", "crond"),
+    ("rc.sshd", "sshd"),
+)
+OWN_SCRIPTS = ("iskra-firewall", "iskra-tutor", "rc.tlp", "rc.chrony", "rc.iskra")
 
 
 def notes(command, tokens):
     """What a command would change, in a line or two (read from the command line only)."""
     words = [t for t in tokens[1:] if not t.startswith("-")]
     flags = [t for t in tokens[1:] if t.startswith("-")]
+    sub = words[0] if words else ""
     out = []
-    if (command == "prt-get" and words[:1] == ["sysup"]) or (
-            command == "iskra-update" and "--dry" not in flags):
-        out.append("This rebuilds, on this laptop, every installed package whose port is newer "
-                   "(prt-get diff lists\nthem) and replaces each one as it goes. There is no "
-                   "rollback; the previous package\nfiles stay in /usr/ports/packages "
-                   "(sudo pkgadd -u -f FILE puts one back).")
+    if (command == "sparkpkg" and sub in ("upgrade", "up")) or (
+            command == "iskra-update" and "--dry" not in flags) or (
+            command == "slpkg" and sub == "upgrade" and "--dry-run" not in flags):
+        out.append("This fetches every repository's latest lists, then replaces each installed "
+                   "package that has a\nnewer version: ready-made packages, so it takes minutes. "
+                   "Anything sparkpkg built from an\nArch or AUR recipe is rebuilt if its recipe "
+                   "is newer. Settings files you have edited are kept;\nthe new ones arrive "
+                   "beside them as NAME.new. sudo sparkpkg undo takes the last change back.")
     if command == "iskra-update" and "--dry" in flags:
-        out.append("With --dry it still updates the ports (git pull, iskra-ports sync, "
-                   "ports -u), then only\nlists what would be rebuilt (prt-get diff).")
-    if command == "ports" and any(f.startswith("-u") for f in flags):
-        out.append("ports -u updates only the recipes in /usr/ports; nothing is built or "
-                   "installed until\nprt-get sysup (iskra-update does both).")
-    if command == "prt-get" and words[:1] in (["depinst"], ["install"], ["update"]):
-        out.append("prt-get builds from source here (each build's output: "
-                   "/var/log/pkgbuild/NAME.log), then\ninstalls with pkgadd"
-                   + (", installing missing dependencies first." if words[0] == "depinst"
-                      else "."))
-    if command == "pkgadd" and "-u" in flags:
-        out.append("pkgadd -u replaces the installed version. Files under /etc are kept as "
-                   "they are; the\npackage's new versions go to /var/lib/pkg/rejected "
-                   "(sudo rejmerge).")
-    if command == "pkgadd" and "-f" in flags:
-        out.append("-f also takes over files another package owns, and installs an older "
-                   "version over a newer.")
-    if tokens[0].startswith(str(RC_D) + "/"):
-        name = Path(tokens[0]).name
-        action = words[0] if words else "start|stop|restart|status"
-        out.append(f"This runs the {name} service script with '{action}' now; it lasts until "
-                   "the next boot.\nAt boot, only the services in SERVICES in /etc/rc.conf "
-                   "start" + (f" ({name} is not among them)." if RC_CONF.exists()
-                              and name not in rc_services() else "."))
-    if command in ("guix", "herd", "loginctl", "shepherd"):
-        out.append("Iskra is CRUX now (it was Guix System): there is no " + command +
-                   " here. The equivalents:\niskra-learn wiki from-arch "
-                   "(and iskra-learn wiki prt-get, rc, sleep).")
+        out.append("With --dry it only fetches the lists (slpkg update) and shows what would "
+                   "change; nothing is\ninstalled.")
+    if (command == "sparkpkg" and sub in ("sync", "update")) or (
+            command == "slpkg" and sub == "update"):
+        out.append("This only fetches the repositories' package lists; nothing is installed "
+                   "or upgraded.")
+    if command == "sparkpkg" and sub in ("install", "i", "add"):
+        out.append("sparkpkg takes each package from the first repository, in Iskra's order, "
+                   "that has it, with\nwhat it needs; if none has it, it builds Arch's or the "
+                   "AUR's recipe into a Slackware\npackage, and shows you the plan first.")
+    if command == "sparkpkg" and sub == "aur":
+        out.append("AUR recipes can be written by anyone: sparkpkg offers to show the PKGBUILD "
+                   "before building.\nIt builds as an ordinary user, never as root.")
+    if command == "upgradepkg":
+        out.append("upgradepkg replaces the installed package of the same name with this file"
+                   + (", or installs it if\nthere is none" if "--install-new" in flags else "")
+                   + ". It doesn't compare versions, so an older file goes back\nto that "
+                   "version. Settings files you have edited are kept; new ones arrive as NAME.new.")
+    if command == "installpkg":
+        out.append("installpkg installs the file as it is: nothing it needs is checked or "
+                   "fetched (sparkpkg\ninstall does that).")
+    script = rc_script(tokens)
+    if script:
+        name = Path(script).name
+        own = name in OWN_SCRIPTS
+        if Path(tokens[0]).name == "chmod":
+            on = any("+x" in t for t in tokens[1:])
+            out.append(f"This changes whether {name} starts at boot: from the next boot it "
+                       + ("will start" if on else "won't start")
+                       + (".\nrc.iskra starts it, from rc.local, if it is executable." if own else
+                          ".\nrc.M starts it, if it is executable."))
+        else:
+            action = words[0] if words else "start|stop|restart|status"
+            out.append(f"This runs the {name} service script with '{action}' now; it lasts "
+                       "until the next boot.\nAt boot it starts only if the script is "
+                       "executable"
+                       + (f" ({name} is not, now)." if Path(script).exists()
+                          and not executable(script) else ".")
+                       + (" rc.iskra starts it, from rc.local." if own else ""))
+    if command in OLD_COMMANDS:
+        out.append(f"Iskra is Slackware now: there is no {command} here. What does its job: "
+                   f"{OLD_COMMANDS[command]}.\n(iskra-learn wiki from-arch has the rest.)")
     destructive = command in ("mkfs.xfs", "mkfs.vfat", "mkfs.fat", "mkfs.exfat", "wipefs",
-                              "sfdisk", "sgdisk", "xfs_repair", "dd", "pkgrm") or (
-        command == "prt-get" and words[:1] == ["remove"])
+                              "sfdisk", "sgdisk", "xfs_repair", "dd", "removepkg") or (
+        command in ("sparkpkg", "slpkg") and sub in ("remove", "rm", "del"))
     if destructive:
         out.append("CAUTION: this command can change or destroy system state"
-                   + (" (removed packages come back only by\ninstalling them again)."
-                      if command in ("pkgrm", "prt-get") else "."))
+                   + (" (a removed package comes back\nwith sudo sparkpkg undo, or by "
+                      "installing it again)."
+                      if command in ("removepkg", "sparkpkg", "slpkg") else "."))
     return out
 
 
 def explain(parts):
     if not parts:
-        print('Usage: iskra-learn explain "sudo prt-get depinst gimp"', file=sys.stderr)
+        print('Usage: iskra-learn explain "sudo sparkpkg install gimp"', file=sys.stderr)
         return 2
     command_line = " ".join(parts)
     try:
@@ -409,7 +485,7 @@ def explain(parts):
                                (tokens[0].startswith("-") and len(tokens[0]) <= 3)):
         tokens = tokens[1:]
     keys = lookup_key(tokens)
-    command = keys[-1]
+    command = Path(tokens[0]).name.lower() if keys == ["rc.d"] else keys[-1]
     print("Command: " + command_line)
     print("READ ONLY: This command was NOT executed.\n")
     lesson_name = first(ALIASES, keys)
@@ -420,7 +496,9 @@ def explain(parts):
     wiki_page = first(WIKI_FOR, keys)
     if wiki_page:
         print("\nIn depth: iskra-learn wiki " + wiki_page)
-    print("Reference: " + (first(MANUALS, keys) or "man " + command))
+    print("Reference: " + (first(MANUALS, keys) or ("iskra-learn wiki from-arch"
+                                                     if command in OLD_COMMANDS
+                                                     else "man " + command)))
     return 0
 
 
@@ -454,68 +532,65 @@ def first_line(path):
         return None
 
 
-def crux_version():
-    """CRUX's own answer (the crux command), else what Iskra installed."""
-    if shutil.which("crux"):
-        answer = read_only(["crux"])
-        if not answer.startswith("unavailable"):
-            return answer
-    return "not CRUX (no crux command)"
+def slackware_version():
+    """Slackware's own answer (/etc/slackware-version: "Slackware 15.0+" is -current), with the
+    kernel package's version."""
+    version = first_line("/etc/slackware-version")
+    if not version:
+        return "not Slackware (no /etc/slackware-version)"
+    if version.endswith("+"):
+        version += " (-current)"
+    kernel = sorted(p.name for p in PKG_DB.glob("kernel-generic-*")) if PKG_DB.is_dir() else []
+    return version + (f", kernel-generic {kernel[-1].split('-')[2]}" if kernel else "")
 
 
 def packages():
-    """How many packages are installed: pkginfo -i, else the blocks of /var/lib/pkg/db."""
-    if shutil.which("pkginfo"):
+    """How many packages are installed: one file each in /var/lib/pkgtools/packages, and how
+    many of them are Iskra's own, or built by sparkpkg from a recipe."""
+    try:
+        names = [p.name for p in PKG_DB.iterdir()]
+    except OSError:
+        return "unknown (no " + str(PKG_DB) + ")"
+    iskra = sum(1 for n in names if n.endswith("_iskra"))
+    recipes = sum(1 for n in names if n.endswith(("_aur", "_arch")))
+    return (f"{len(names)} installed ({iskra} Iskra's own, {recipes} built from Arch/AUR "
+            f"recipes; {PKG_DB})")
+
+
+def last_change():
+    """When packages last changed: slpkg's history, else the newest entry of the package list."""
+    for path in (SLPKG_HISTORY, PKG_DB):
         try:
-            result = subprocess.run(["pkginfo", "-i"], capture_output=True, text=True,
-                                    check=False, timeout=10)
-            if result.returncode == 0:
-                return f"{len(result.stdout.splitlines())} installed (pkginfo -i)"
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+            when = path.stat().st_mtime
+        except OSError:
+            continue
+        return (time.strftime("%Y-%m-%d %H:%M", time.localtime(when))
+                + ("  (sparkpkg history)" if path == SLPKG_HISTORY else ""))
+    return "unknown"
+
+
+def repositories():
+    """The PRIORITY list under [ALL_REPOS] in /etc/slpkg/repositories.toml, in order."""
     try:
-        text = PKG_DB.read_text(encoding="utf-8", errors="replace")
+        text = SLPKG_REPOS.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return "unknown (no pkginfo, no " + str(PKG_DB) + ")"
-    return f"{len([b for b in text.split(chr(10) * 2) if b.strip()])} installed ({PKG_DB})"
+        return "unknown (no " + str(SLPKG_REPOS) + ")"
+    section = re.search(r"^\[ALL_REPOS\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    found = section and re.search(r"^PRIORITY\s*=\s*\[([^\]]*)\]", section.group(1), re.M)
+    if not found:
+        return "no PRIORITY list in " + str(SLPKG_REPOS)
+    return " ".join(re.findall(r'"([^"]+)"', found.group(1))) or "none listed"
 
 
-def updates():
-    """prt-get quickdiff: the installed packages whose port has another version."""
-    if not shutil.which("prt-get"):
-        return "unavailable: prt-get"
-    try:
-        result = subprocess.run(["prt-get", "quickdiff"], capture_output=True, text=True,
-                                check=False, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return "not available"
-    names = result.stdout.split()
-    if result.returncode != 0 and not names:
-        return "unknown"
-    if not names:
-        return "none: every installed package matches its port"
-    shown = " ".join(names[:6]) + (" ..." if len(names) > 6 else "")
-    return f"{len(names)} with a newer port ({shown})"
-
-
-def collections():
-    """The prtdir lines of /etc/prt-get.conf, in order, each marked if its folder is missing."""
-    try:
-        lines = PRT_GET_CONF.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return "unknown (no " + str(PRT_GET_CONF) + ")"
-    dirs = [line.split()[1].split(":")[0] for line in lines
-            if line.strip().startswith("prtdir") and len(line.split()) > 1]
-    if not dirs:
-        return "none listed"
-    return " ".join(Path(d).name + ("" if Path(d).is_dir() else " (missing)") for d in dirs)
-
-
-def repository():
-    if not (REPO / ".git").exists():
-        return "not found (" + str(REPO) + ")"
-    answer = read_only(["git", "-C", str(REPO), "log", "-1", "--format=%h %cs %s"])
-    return answer[:80]
+def new_files():
+    """Settings files that arrived as .new beside an edited copy (readable folders only)."""
+    found = []
+    for folder, _, files in os.walk("/etc", onerror=lambda error: None):
+        found += [os.path.join(folder, f) for f in files if f.endswith(".new")]
+    if not found:
+        return "none"
+    shown = " ".join(sorted(found)[:3]) + (" ..." if len(found) > 3 else "")
+    return f"{len(found)}: {shown}"
 
 
 def hibernation():
@@ -532,40 +607,52 @@ def hibernation():
     return "no swap partition to hibernate into"
 
 
-# the process each service leaves running, for looking without root (none: a one-off script)
-PROCESS = {
-    "dbus": "dbus-daemon", "networkmanager": "NetworkManager", "acpid": "acpid",
-    "thermald": "thermald", "bluetoothd": "bluetoothd", "chronyd": "chronyd",
-    "crond": "crond", "iskra-tutor": "llama-server", "sshd": "sshd", "cupsd": "cupsd",
-    "lo": None, "tlp": None, "iskra-firewall": None, "net": None,
-}
-
-
-def service(name):
-    """One service: its script's status as root; otherwise whether its process runs."""
-    script = RC_D / name
-    if not script.exists():
-        return "no script in /etc/rc.d"
-    if os.geteuid() == 0:
-        try:
-            result = subprocess.run([str(script), "status"], capture_output=True, text=True,
-                                    check=False, timeout=6, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired):
-            return "status not available"
-        lines = [l.strip() for l in (result.stdout + result.stderr).splitlines() if l.strip()]
-        return lines[0][:120] if lines else "no status output"
-    process = PROCESS.get(name, name)
-    if process is None:
-        return "runs once at boot (sudo iskra-learn doctor shows its status)"
+def process(name):
+    """Whether a process of that name runs, looked at without root."""
     if not shutil.which("pgrep"):
         return "unknown"
     try:
-        result = subprocess.run(["pgrep", "-x", process], capture_output=True, text=True,
+        result = subprocess.run(["pgrep", "-x", name], capture_output=True, text=True,
                                 check=False, timeout=4)
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
     pids = result.stdout.split()
-    return f"running ({process}, pid {pids[0]})" if pids else f"not running ({process})"
+    return f"running ({name}, pid {pids[0]})" if pids else f"not running ({name})"
+
+
+def script_status(script):
+    """A one-off service's own status line (as root only)."""
+    try:
+        result = subprocess.run([script, "status"], capture_output=True, text=True,
+                                check=False, timeout=6, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return "status not available"
+    lines = [l.strip() for l in (result.stdout + result.stderr).splitlines() if l.strip()]
+    return lines[0][:100] if lines else "no status output"
+
+
+def iskra_service(name):
+    """One of rc.iskra's services: installed? on at boot? running?"""
+    path, proc = ISKRA_SERVICE.get(name, (None, None))
+    if path is None:
+        return "not known to iskra-learn (read /etc/rc.d/rc.iskra)"
+    if not Path(path).exists():
+        return "not installed"
+    if path.startswith(str(RC_D)) and not executable(path):
+        return f"off at boot ({path} is not executable)"
+    if proc:
+        return process(proc)
+    if os.geteuid() == 0:
+        return script_status(path)
+    return "runs once at boot (sudo iskra-learn doctor shows its status)"
+
+
+def slackware_service(script, proc):
+    path = RC_D / script
+    if not path.exists():
+        return "not installed"
+    boot = "on at boot" if executable(path) else "off at boot"
+    return f"{boot:<12} {process(proc)}"
 
 
 def doctor():
@@ -573,12 +660,12 @@ def doctor():
     values = (
         ("Init (PID 1)", lambda: first_line("/proc/1/comm") or "unknown"),
         ("Kernel", lambda: read_only(["uname", "-r"])),
-        ("System", crux_version),
+        ("System", slackware_version),
         ("Iskra", lambda: first_line("/usr/share/iskra/version") or "not installed"),
-        ("Repository", repository),
         ("Packages", packages),
-        ("Updates", updates),
-        ("Collections", collections),
+        ("Last change", last_change),
+        ("Repositories", repositories),
+        ("Settings (.new)", new_files),
         ("Root filesystem", lambda: read_only(["findmnt", "-n", "-o", "SOURCE,FSTYPE,OPTIONS",
                                                "--target", "/"])),
         ("Swap", lambda: read_only(["swapon", "--show=NAME,TYPE,SIZE", "--noheadings"])),
@@ -590,18 +677,18 @@ def doctor():
         print(f"{label:<17} {get()}")
     print(f"{'Battery':<17} {battery()}")
     print(f"{'Display':<17} {os.environ.get('DISPLAY', 'not in X')}  (window manager: ratpoison)")
-    names = rc_services()
+    print("\nSlackware's services (rc.M starts each one whose script is executable):")
+    for script, proc in SLACKWARE_SERVICES:
+        print(f"  {script:<19} {slackware_service(script, proc)}")
+    names = iskra_services()
     if names:
-        print(f"\nServices started at boot (SERVICES in {RC_CONF}):")
+        print(f"\nIskra's services ({RC_ISKRA}, started from rc.local):")
         for name in names:
-            print(f"  {name:<17} {service(name)}")
+            print(f"  {name:<19} {iskra_service(name)}")
     else:
-        print(f"\nServices: no SERVICES list found in {RC_CONF}")
-    if os.geteuid() != 0:
-        print("\nServices are shown by their processes; sudo iskra-learn doctor asks each "
-              "/etc/rc.d script.")
-    print("What would update:  prt-get diff   (iskra-update --dry)")
-    print("No rollback on CRUX: earlier package files are in /usr/ports/packages.")
+        print(f"\nIskra's services: no SERVICES list found in {RC_ISKRA}")
+    print("\nWhat would update:  iskra-update --dry")
+    print("Take back the last install, upgrade or removal:  sudo sparkpkg undo")
     print("\nWhat each line means: iskra-learn learn architecture")
     print("Sources and manuals:  iskra-learn sources")
     return 0
@@ -615,17 +702,18 @@ def open_reference(target):
 
 
 def handbook():
-    """The CRUX handbook, offline, in less (iskra-handbook does the same in its own window)."""
+    """The Slackware book, offline, in less (iskra-handbook does the same in its own window)."""
     if not HANDBOOK.is_file():
-        print(f"The CRUX handbook is not at {HANDBOOK} (the installer copies it from the stick).")
-        print("Online: " + CRUX_WEB)
+        print(f"The Slackware book is not at {HANDBOOK} yet. Fetch it (once, with the "
+              "internet): sudo iskra-handbook update")
+        print("Online: " + BOOK_WEB)
         return 2
     pager = shutil.which("less")
     if pager and sys.stdin.isatty() and sys.stdout.isatty():
         return subprocess.run([pager, str(HANDBOOK)], check=False).returncode
-    print(f"The CRUX handbook, offline: less {HANDBOOK}  (or iskra-handbook)")
+    print(f"The Slackware book, offline: less {HANDBOOK}  (or iskra-handbook)")
     print("Beside this wiki, in Midnight Commander: iskra-handbook mc")
-    print("Online: " + CRUX_WEB)
+    print("Online: " + BOOK_WEB)
     return 0
 
 
@@ -641,7 +729,7 @@ def manual(name):
         print("Invalid manual name.", file=sys.stderr)
         return 2
     if not shutil.which("man"):
-        print("Manual viewer unavailable; read the CRUX handbook: iskra-handbook",
+        print("Manual viewer unavailable; read the Slackware book: iskra-handbook",
               file=sys.stderr)
         return 2
     return subprocess.run(["man", "--", name], check=False).returncode
@@ -656,12 +744,12 @@ def main(argv=None):
     ex = sub.add_parser("explain", help="explain without executing")
     ex.add_argument("command", nargs=argparse.REMAINDER)
     sub.add_parser("browse", help="browse offline chapters interactively")
-    wk = sub.add_parser("wiki", help="the Iskra wiki: CRUX explained, page by page")
+    wk = sub.add_parser("wiki", help="the Iskra wiki: Slackware explained, page by page")
     wk.add_argument("page", nargs="?")
     se = sub.add_parser("search", help="search the lessons and the wiki")
     se.add_argument("words", nargs="+")
     sub.add_parser("doctor", help="show read-only system state")
-    sub.add_parser("handbook", help="open the CRUX handbook, offline")
+    sub.add_parser("handbook", help="open the Slackware book, offline")
     sub.add_parser("sources", help="show authoritative reference links")
     ma = sub.add_parser("manual", help="open installed man page")
     ma.add_argument("name")

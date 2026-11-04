@@ -1,21 +1,26 @@
-# The CRUX handbook, offline
+# The Slackware book, offline
 
-The CRUX handbook is CRUX's official documentation, written by its developers for each
-release: installing, configuring the system (rc.conf, the rc scripts, networking), the
-package system (pkgutils, ports, prt-get), building a kernel, and writing ports. It is short
-enough to read in an evening, and the rest of CRUX assumes you have. It lives online at
-https://crux.nu/Main/Handbook3-8 and the CRUX team keeps improving it, so Iskra keeps the
-newest copy offline in /usr/share/doc/crux/handbook.txt: the installer fetches it once the
-desktop is compiled, and iskra-update fetches it again each time. The copy from the install
-stick stays beside it (handbook-stick.txt), with CRUX 3.8's release notes.
+"Slackware Linux Essentials", the Slackware book, is the guide written for Slackware by Alan
+Hicks, Chris Lumens, David Cantrell and Logan Johnson: the shell, users and permissions,
+filesystems, networking, the X Window System, package management, keeping up with updates and
+building a kernel. It is written for newcomers, and the rest of Slackware assumes you know what
+it says. Its current copy lives on the Slackware documentation wiki,
+https://docs.slackware.com/slackbook:start, one chapter a page, and Iskra keeps it offline as a
+single text file: /usr/share/doc/slackbook/slackbook.txt. iskra-update fetches it again each
+time, so it stays current.
+
+Some of it is older than Iskra's way of doing things: it boots with LILO, where Iskra uses GRUB
+on UEFI (see: boot), and it installs from Slackware's own installer, where Iskra has
+iskra-install. Everything about the shell, the files and the package tools still holds.
 
 ## Reading it
-  iskra-handbook            the handbook in less (menu -> Learn -> CRUX handbook)
-  iskra-handbook mc         Midnight Commander with this wiki on one side and the
-                              handbook's folder on the other
-  iskra-handbook notes      CRUX 3.8's release notes
-  iskra-handbook update     fetch the newest handbook now
-  less /usr/share/doc/crux/handbook.txt     the same, in any terminal
+  iskra-handbook            the book in less (also in the menu's Learn list)
+  iskra-handbook mc         Midnight Commander with this wiki on one side and the book's
+                            folder on the other
+  iskra-handbook notes      Slackware -current's ChangeLog: every change, newest first, with
+                            Patrick Volkerding's notes on the big ones
+  iskra-handbook update     fetch the newest book and ChangeLog now (needs the internet)
+  less /usr/share/doc/slackbook/slackbook.txt     the same, in any terminal
 
 less's keys:
   Space / b                   next and previous page
@@ -23,23 +28,32 @@ less's keys:
   g / G                       the start / the end
   q                           quit
 
-Searching is the quickest way in: /prt-get, /rc.conf, /footprint, /SERVICES ...
+Searching is the quickest way in: /installpkg, /inittab, /rc.M, /fstab ...
+
+## How it is fetched
+iskra-handbook update reads the book's contents page (slackbook:start, as raw text) for the
+chapters and their order, fetches each chapter as plain HTML (?do=export_xhtml), and
+/usr/lib/iskra/handbook-text turns them into one text file: headings, paragraphs, lists and the
+command examples exactly as they are. If the site can't be reached, or what comes back doesn't
+look like the whole book, the offline copy stays as it was. The ChangeLog comes from a Slackware
+mirror (slackware.uk) and is kept beside it, as ChangeLog.txt.
 
 ## The manual pages
-The handbook explains; the manual pages give every option:
-  man prt-get ; man prt-get.conf ; man ports ; man pkgmk ; man pkgmk.conf
-  man pkgadd ; man pkgrm ; man pkginfo ; man rejmerge
-  man init ; man inittab ; man start-stop-daemon
+The book explains; the manual pages give every option:
+  man installpkg ; man upgradepkg ; man removepkg ; man makepkg ; man explodepkg ; man pkgtool
+  man slpkg ; man init ; man inittab ; man fstab
 
 ## Online
-  https://crux.nu/                         the handbook, the FAQ, the wiki and the mailing lists
-  https://crux.nu/portdb/                  every port in every collection, searchable
-The CRUX wiki has pages on more than the handbook covers (hibernation, Wi-Fi, specific
-hardware), written by its users.
+  https://docs.slackware.com/          SlackDocs: the book, and HOWTOs written by Slackware's
+                                       users on much more than the book covers
+  https://www.slackware.com/           Slackware itself
+  https://www.linuxquestions.org/questions/slackware-14/   the Slackware forum, where its
+                                       developers answer too
+  https://slackbuilds.org/             SlackBuilds, with a README for each (see: slackbuilds)
 
 ## Where it fits
-The handbook says how CRUX is meant to be used; this wiki explains the same system at shorter
-length, with Iskra's own choices; the lessons (iskra-learn learn) are the short tour. When
-they disagree, the handbook and the manual pages are right.
+The book says how Slackware is meant to be used; this wiki explains the same system at shorter
+length, with Iskra's own choices; the lessons (iskra-learn learn) are the short tour. When they
+disagree, the manual pages are right.
 
 See also: index ; man less

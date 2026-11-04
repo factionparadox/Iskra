@@ -33,3 +33,15 @@ if [ -f etc/ly/config.ini ]; then
   set_ly brightness_down_cmd "/usr/bin/brightnessctl -q -n s 10%-"
   set_ly brightness_up_cmd "/usr/bin/brightnessctl -q -n s +10%"
 fi
+# The power button sleeps (etc/acpi/events/iskra-power), so Slackware's catch-all acpid handler
+# no longer powers off for it; acpid on
+if [ -f etc/acpi/acpi_handler.sh ] && grep -q 'power) /sbin/init 0' etc/acpi/acpi_handler.sh; then
+  sed -i 's|power) /sbin/init 0|power) : # Iskra: iskra-sleep (etc/acpi/events/iskra-power)|' etc/acpi/acpi_handler.sh
+fi
+[ -f etc/rc.d/rc.acpid ] && chmod 755 etc/rc.d/rc.acpid
+# A laptop needs no SSH server listening: switched off once, when Iskra is first installed
+# (chmod +x /etc/rc.d/rc.sshd turns it on, and upgrades leave that alone)
+if [ ! -e var/lib/iskra/sshd-off-once ]; then
+  [ -f etc/rc.d/rc.sshd ] && chmod 644 etc/rc.d/rc.sshd
+  mkdir -p var/lib/iskra && touch var/lib/iskra/sshd-off-once
+fi

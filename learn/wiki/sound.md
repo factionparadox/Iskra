@@ -9,11 +9,10 @@ here iskra-session does, before anything else:
   pipewire          the server
   wireplumber       the session manager: picks devices, remembers volumes
   pipewire-pulse    the PulseAudio replacement, for programs that speak PulseAudio (Firefox)
-XDG_RUNTIME_DIR (/run/user/UID, where the sockets go) is made at login by the
-dumb_runtime_dir PAM module, which does the one part of logind's job PipeWire needs. All
-three stop when the session ends. The PulseAudio package is installed for its libraries and
-pactl; /etc/pulse/client.conf.d/50-iskra.conf (autospawn = no) keeps its daemon from
-starting. Plain ALSA programs (aplay) go straight to the hardware, not through PipeWire.
+XDG_RUNTIME_DIR (/run/user/UID, where the sockets go) is made at login by elogind (see:
+sleep). All three stop when the session ends. The PulseAudio package is installed for its
+libraries and pactl; /etc/pulse/client.conf.d/50-iskra.conf (autospawn = no) keeps its daemon
+from starting. Plain ALSA programs (aplay) go straight to the hardware, not through PipeWire.
 
 ## Using it
   volume keys, mute, mic mute        wpctl (bound in ratpoison)
@@ -25,7 +24,7 @@ starting. Plain ALSA programs (aplay) go straight to the hardware, not through P
 
 ## Laptop audio
 The Framework's speakers and microphones sit behind Intel's audio DSP: the kernel's SOF and
-SoundWire drivers run it, with firmware from linux-firmware. Bluetooth headphones go through
+SoundWire drivers run it, with firmware from kernel-firmware. Bluetooth headphones go through
 PipeWire too; pair them in bluetuith (Ctrl+Super+b).
 
 ## When there is no sound
@@ -37,5 +36,5 @@ PipeWire too; pair them in bluetuith (Ctrl+Super+b).
 Then pkill pipewire wireplumber pipewire-pulse and start them again from a terminal, to read
 their messages.
 
-See also: sleep (what logind would have done), firmware ; man pipewire ; man wpctl ;
+See also: sleep (what elogind does), firmware ; man pipewire ; man wpctl ;
 https://docs.pipewire.org/
