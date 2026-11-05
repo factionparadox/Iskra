@@ -160,6 +160,135 @@ def plant(d, x, y, kind):
             d.line([(x + k, y - 40), (x + k * 0.6, y - 12)], fill=(190, 98, 30, 255), width=1)
 
 
+
+JP = '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'
+SANS = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+
+
+def font(path, size):
+    from PIL import ImageFont
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def chamfer(d, box, cut, fill, outline, width=1):
+    x0, y0, x1, y1 = box
+    pts = [(x0 + cut, y0), (x1, y0), (x1, y1 - cut), (x1 - cut, y1), (x0, y1), (x0, y0 + cut)]
+    d.polygon(pts, fill=fill)
+    d.line(pts + [pts[0]], fill=outline, width=width)
+
+
+ELEMENTS = [(201, 163, 90), (74, 100, 200), (91, 200, 91), (224, 112, 90)]
+
+
+def stat_plate(d, x, y, values):
+    """four slanted bars in the element colours, each with its number: hovering over an object"""
+    f = font(SANS, 10)
+    for i, (col, v) in enumerate(zip(ELEMENTS, values)):
+        yy = y + i * 13
+        d.polygon([(x + 8, yy), (x + 92, yy), (x + 84, yy + 11), (x, yy + 11)], fill=(10, 14, 28, 230), outline=(70, 96, 140, 255))
+        d.polygon([(x + 12, yy + 3), (x + 34, yy + 3), (x + 30, yy + 8), (x + 8, yy + 8)], fill=col + (255,))
+        d.text((x + 80, yy - 1), str(v), font=f, fill=(238, 244, 251, 255), anchor='ra')
+
+
+def bubble(img, cx, cy, r):
+    """a pixie asleep in a glossy bubble"""
+    layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(170, 200, 240, 80), outline=(220, 236, 255, 200), width=2)
+    # the curled figure inside: head, body, folded wings
+    d.ellipse([cx - r * 0.35, cy - r * 0.45, cx + r * 0.05, cy - r * 0.05], fill=(240, 236, 250, 200))
+    d.ellipse([cx - r * 0.25, cy - r * 0.15, cx + r * 0.4, cy + r * 0.45], fill=(214, 206, 236, 190))
+    d.polygon([(cx + r * 0.05, cy - r * 0.1), (cx + r * 0.6, cy - r * 0.55), (cx + r * 0.35, cy + r * 0.1)], fill=(190, 230, 250, 150))
+    d.ellipse([cx - r * 0.6, cy - r * 0.7, cx - r * 0.15, cy - r * 0.35], fill=(255, 255, 255, 170))   # the shine
+    img.alpha_composite(layer)
+    sh = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sh).ellipse([cx - r * 0.8, cy + r * 1.6, cx + r * 0.8, cy + r * 1.9], fill=(0, 0, 0, 90))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)))
+
+
+def feather(d, cx, cy, ln, ang):
+    """a black feather-shaped flyer, edged in rainbow light"""
+    a = math.radians(ang)
+    ux, uy = math.cos(a), math.sin(a)
+    px, py = -uy, ux
+    tip, tail = (cx + ux * ln, cy + uy * ln), (cx - ux * ln, cy - uy * ln)
+    left, right = (cx + px * ln * 0.28, cy + py * ln * 0.28), (cx - px * ln * 0.28, cy - py * ln * 0.28)
+    d.polygon([tip, left, tail, right], fill=(18, 18, 30, 255))
+    for k, col in enumerate([(255, 63, 90), (232, 196, 110), (91, 200, 91), (95, 216, 240), (154, 120, 255)]):
+        t = 0.15 + k * 0.15
+        d.line([(left[0] + (tip[0] - left[0]) * t, left[1] + (tip[1] - left[1]) * t),
+                (left[0] + (tip[0] - left[0]) * (t + 0.15), left[1] + (tip[1] - left[1]) * (t + 0.15))], fill=col + (255,), width=2)
+    d.line([tail, tip], fill=(60, 64, 90, 255), width=1)
+
+
+def prism(img, cx, base, hgt, wid):
+    """a violet crystal pillar with something faint caught inside"""
+    layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    top = base - hgt
+    body = [(cx - wid, top + wid), (cx, top), (cx + wid, top + wid), (cx + wid, base - wid * 0.6), (cx, base), (cx - wid, base - wid * 0.6)]
+    d.polygon(body, fill=(186, 160, 236, 170), outline=(236, 226, 255, 230))
+    d.polygon([(cx - wid, top + wid), (cx, top), (cx, base), (cx - wid, base - wid * 0.6)], fill=(214, 196, 250, 120))
+    d.line([(cx, top), (cx, base)], fill=(250, 246, 255, 200), width=1)
+    d.ellipse([cx - wid * 0.4, top + hgt * 0.4, cx + wid * 0.5, top + hgt * 0.62], fill=(255, 220, 246, 110))
+    glow = layer.filter(ImageFilter.GaussianBlur(8))
+    img.alpha_composite(glow)
+    img.alpha_composite(layer)
+
+
+def hud(img):
+    """the game-style HUD over the scene: day counter, planet panel, minimap, name plates"""
+    d = ImageDraw.Draw(img)
+    w, h = img.size
+    big, small, jp, jps = font(SANS, 20), font(SANS, 10), font(JP, 16), font(JP, 12)
+
+    # top right: the day counter with its 0-40 scale, and a song title between notes
+    x0, y0 = w - 300, 34
+    d.text((x0 + 10, y0), '01', font=big, fill=(238, 244, 251, 255))
+    d.text((x0 + 40, y0 + 6), 'days in the garden', font=small, fill=(238, 244, 251, 255))
+    chamfer(d, (x0, y0 + 30, x0 + 270, y0 + 58), 8, (10, 14, 28, 235), (90, 120, 170, 255))
+    for i, v in enumerate((0, 10, 20, 30, 40)):
+        xx = x0 + 18 + i * 58
+        d.text((xx, y0 + 32), str(v), font=small, fill=(220, 230, 245, 255), anchor='ma')
+    d.rectangle([x0 + 18, y0 + 46, x0 + 18 + 232, y0 + 49], fill=(60, 80, 120, 255))
+    d.rectangle([x0 + 18, y0 + 46, x0 + 18 + 70, y0 + 49], fill=(224, 70, 70, 255))
+    d.rectangle([x0 + 18, y0 + 51, x0 + 18 + 232, y0 + 53], fill=(40, 60, 90, 255))
+    d.rectangle([x0 + 18, y0 + 51, x0 + 18 + 150, y0 + 53], fill=(91, 200, 91, 255))
+    d.text((x0 + 20, y0 + 62), '♪', font=jps, fill=(238, 244, 251, 255))
+    d.text((x0 + 135, y0 + 60), 'イスクラ', font=jp, fill=(238, 244, 251, 255), anchor='ma')
+    d.text((x0 + 250, y0 + 62), '♪', font=jps, fill=(238, 244, 251, 255))
+
+    # bottom left: the planet panel
+    px, py = 40, h - 150
+    d.polygon([(px, py), (px + 150, py), (px + 140, py + 18), (px, py + 18)], fill=(10, 14, 28, 240), outline=(120, 150, 200, 255))
+    d.text((px + 8, py + 3), 'PLANET', font=small, fill=(238, 244, 251, 255))
+    d.rectangle([px + 70, py + 6, px + 96, py + 11], fill=(224, 70, 70, 255))
+    chamfer(d, (px, py + 22, px + 250, py + 112), 14, (12, 20, 44, 230), (120, 150, 200, 255), 2)
+    d.text((px + 14, py + 26), 'AVALON', font=font(SANS, 14), fill=(238, 244, 251, 255))
+    for k in range(6):
+        d.line([(px + 12, py + 50 + k * 9), (px + 128, py + 50 + k * 9)], fill=(40, 60, 100, 255))
+    d.ellipse([px + 40, py + 48, px + 98, py + 106], fill=(52, 120, 230, 255))
+    d.ellipse([px + 48, py + 54, px + 74, py + 74], fill=(110, 170, 250, 255))
+    d.arc([px + 20, py + 66, px + 118, py + 90], 160, 380, fill=(120, 220, 110, 255), width=4)
+    for i, col in enumerate(ELEMENTS):
+        d.rectangle([px + 160, py + 44 + i * 14, px + 222, py + 49 + i * 14], fill=col + (255,))
+
+    # bottom right: the hexagonal minimap, the garden as seen from above
+    mx, my, mw, mh = w - 320, h - 112, 280, 92
+    hexa = [(mx + 24, my), (mx + mw - 24, my), (mx + mw, my + mh / 2), (mx + mw - 24, my + mh), (mx + 24, my + mh), (mx, my + mh / 2)]
+    d.polygon(hexa, fill=(10, 18, 24, 215), outline=(70, 110, 90, 255))
+    for _ in range(18):
+        sx, sy, ss = rng.uniform(mx + 40, mx + mw - 60), rng.uniform(my + 12, my + mh - 30), rng.choice((8, 10, 14, 18))
+        d.rectangle([sx, sy, sx + ss, sy + ss], outline=(98, 214, 110, 255), width=1)
+    for col in ((70, 110, 255), (70, 110, 255), (70, 110, 255), (240, 80, 80), (240, 80, 80)):
+        sx, sy = rng.uniform(mx + 50, mx + mw - 50), rng.uniform(my + 15, my + mh - 15)
+        d.rectangle([sx, sy, sx + 4, sy + 4], fill=col + (255,))
+    d.rectangle([mx + mw * 0.55, my + 6, mx + mw * 0.55 + 2, my + mh - 6], fill=(255, 40, 160, 255))
+
+
 def wallpaper(pasha):
     # painted at the console's sort of resolution, then scaled up with hard pixels
     w, h = 960, 640
@@ -237,6 +366,17 @@ def wallpaper(pasha):
     crystal(img, 240, 300, 16)
     crystal(img, 770, 330, 12)
 
+    # the garden's odd life: pixies asleep in bubbles, feather-flyers, a violet prism
+    bubble(img, 420, 440, 22)
+    bubble(img, 470, 470, 15)
+    prism(img, 330, 508, 120, 22)
+    d = ImageDraw.Draw(img)
+    feather(d, 120, 120, 26, 70)
+    feather(d, 210, 92, 18, 55)
+    feather(d, 860, 170, 20, 110)
+    # a red targeting line from the near ground to a beacon
+    d.line([(150, 600), (240, 300)], fill=(230, 40, 40, 255), width=1)
+
     # the pixies' sparks
     glow = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
@@ -258,14 +398,29 @@ def wallpaper(pasha):
     img.alpha_composite(rim.filter(ImageFilter.GaussianBlur(4)))
     img.alpha_composite(p, (552, 348))
 
+    # stat plates hovering by the beacons
+    d = ImageDraw.Draw(img)
+    stat_plate(d, 270, 250, (16, -26, 0, 63))
+    stat_plate(d, 790, 284, (48, 2, -6, 0))
+
     # vignette
     yy, xx = np.mgrid[0:h, 0:w]
     v = 1 - 0.45 * np.clip(((xx - w / 2) / (w * 0.62)) ** 2 + ((yy - h * 0.45) / (h * 0.7)) ** 2, 0, 1)
     a = np.asarray(img.convert('RGB')).astype(np.float32) * v[:, :, None]
     img = Image.fromarray(a.astype(np.uint8))
 
-    img = bayer_dither(img, levels=48)
-    return img.resize((W, H), Image.NEAREST)
+    img = bayer_dither(img, levels=48).convert('RGBA')
+
+    # the HUD stays crisp, as the console drew it over the 3D scene
+    hud(img)
+    d = ImageDraw.Draw(img)
+    plate = lambda x, y, text: (
+        d.polygon([(x + 10, y), (x + 120, y), (x + 132, y + 11), (x + 120, y + 22), (x + 10, y + 22), (x - 2, y + 11)],
+                  fill=(191, 227, 214, 255), outline=(255, 255, 255, 255)),
+        d.text((x + 18, y + 2), text, font=font(JP, 14), fill=(12, 20, 38, 255)))
+    plate(560, 316, 'パーシャ')
+    plate(170, 225, 'アヴァロン')
+    return img.convert('RGB').resize((W, H), Image.NEAREST)
 
 
 def portrait(pasha):
