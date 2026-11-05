@@ -40,7 +40,9 @@ make_key() {
 	root key
 	[ -f "$KEY.sec" ] && { echo "You already have a key: $KEY.pub"; return 0; }
 	install -d -m 755 /etc/ports
-	signify -G -n -c "Avalon ports, signed on $(hostname)" -p "$KEY.pub" -s "$KEY.sec"
+	# signify wants both names bare, in the same folder (keyname.pub and keyname.sec)
+	( cd "$(dirname "$KEY")" && signify -G -n -c "Avalon ports, signed on $(hostname)" \
+		-p "$(basename "$KEY").pub" -s "$(basename "$KEY").sec" )
 	chmod 600 "$KEY.sec"
 	say "Your key: $KEY.pub (the secret half, $KEY.sec, never leaves this machine)"
 }

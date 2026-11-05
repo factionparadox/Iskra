@@ -27,6 +27,15 @@ fresh() { rm -f "$2"; curl -fsSL --retry 5 -o "$2" "$1"; }   # small files: alwa
 
 [ "$(id -u)" = 0 ] || die "run it as root: sudo $0"
 mkdir -p "$WORK/dl" "$WORK/pkgs"
+# the build system an earlier version of this script made is no longer used: remove it, but
+# only if nothing is still mounted inside it
+if [ -d "$WORK/root" ]; then
+	if grep -q " $WORK/root/" /proc/mounts; then
+		die "$WORK/root (from an earlier version) still has things mounted in it: reboot WSL (wsl --shutdown), then run this again"
+	fi
+	say "Removing the old build system ($WORK/root), no longer needed"
+	rm -rf "$WORK/root" "$WORK/crux" "$WORK/overlay"
+fi
 free=$(df -Pk "$WORK" | awk 'NR == 2 {print int($4 / 1048576)}')
 [ "$free" -ge 15 ] || die "$WORK has ${free} GB free; about 15 GB is needed (WORK=/somewhere/else to move it)"
 
