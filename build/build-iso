@@ -83,7 +83,10 @@ for p in slpkg fakeroot sparkpkg; do
   echo "$sum  $repo/$file" | md5sum -c --status || die "$file does not match Iskra's signed checksum"
   gpg --homedir "$g" --batch --status-fd 1 --verify "$repo/$file.asc" "$repo/$file" 2>/dev/null |
     grep -q "VALIDSIG $fpr" || die "$file is not signed by Iskra's key"
-  ROOT=$ROOT "$ROOT/sbin/upgradepkg" --install-new --reinstall "$repo/$file" >/dev/null
+  # installed from inside ROOT: Slackware's upgradepkg calls /sbin/installpkg, which only ROOT has
+  cp "$repo/$file" "$ROOT/tmp/"
+  run /sbin/upgradepkg --install-new --reinstall "/tmp/$file" >/dev/null
+  rm -f "$ROOT/tmp/$file"
   echo "    $file"
 done
 rm -rf "$g"
@@ -93,7 +96,7 @@ sed -i "s|^MIRROR = \"https://github.com/factionparadox/Iskra/releases/download/
 cp "$keys/iskra.asc" "$keys/FINGERPRINTS" "$ROOT/usr/share/sparkpkg/keys/"
 
 say "The repositories' package lists (sparkpkg sync)"
-run sparkpkg sync < /dev/null > "$WORK/sync.log" 2>&1 || { tail -30 "$WORK/sync.log"; die "sparkpkg sync failed"; }
+yes y | run sparkpkg sync > "$WORK/sync.log" 2>&1 || { tail -30 "$WORK/sync.log"; die "sparkpkg sync failed"; }
 grep -E "trusted|Error" "$WORK/sync.log" || true
 
 say "Iskra, and everything it needs that Slackware's series don't have"
