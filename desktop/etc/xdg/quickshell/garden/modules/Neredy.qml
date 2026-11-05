@@ -83,6 +83,15 @@ PanelWindow {
 	}
 	Process { id: toucher; command: ["neredy", "touch"] }
 
+	// reading aloud: the Russian in a reply, through Piper
+	property bool readAloud: true
+	Process { id: voice }
+	function say(text) {
+		voice.running = false
+		voice.command = ["neredy", "say", text]
+		voice.running = true
+	}
+
 	// ------------------------------------------------------ talking: streamed, word by word
 	function send(text) {
 		if (text.trim() === "" || status !== "ready") return
@@ -119,6 +128,7 @@ PanelWindow {
 				if (x.status !== 200 && reply === "") shown.setProperty(row, "text", "(Pasha couldn't reach the model: is it still starting?)")
 				history = history.concat([{ role: "assistant", content: reply }])
 				status = "ready"
+				if (mode === "tutor" && readAloud && reply !== "") say(reply)
 				toucher.running = true
 				list.positionViewAtEnd()
 			}
@@ -184,6 +194,14 @@ PanelWindow {
 		spacing: 14
 		ChevronTab { text: "Neredy"; glyph: "風"; selected: neredy.mode === "neredy"; onClicked: neredy.setMode("neredy"); height: 36 }
 		ChevronTab { text: "Russian tutor"; glyph: "火"; selected: neredy.mode === "tutor"; onClicked: neredy.setMode("tutor"); height: 36 }
+		ChevronTab {
+			visible: neredy.mode === "tutor"
+			text: neredy.readAloud ? "read aloud: on" : "read aloud: off"
+			glyph: "♪"
+			selected: neredy.readAloud
+			onClicked: neredy.readAloud = !neredy.readAloud
+			height: 36
+		}
 	}
 	Text {
 		anchors { right: parent.right; rightMargin: 70; top: parent.top; topMargin: 72 }
@@ -234,6 +252,15 @@ PanelWindow {
 					font.pixelSize: msg.mine ? Theme.normal + 1 : Theme.large + 1
 					lineHeight: 1.15
 				}
+			}
+			Rectangle {   // read this one aloud
+				visible: !msg.mine && msg.text !== ""
+				anchors { left: box.right; leftMargin: 10; top: box.top }
+				width: 34; height: 34; radius: 17
+				color: speak.containsMouse ? "#3a5a8c" : "#22304e"
+				border.color: Theme.edgeBright; border.width: 1
+				Text { anchors.centerIn: parent; text: "♪"; color: Theme.ice; font.pixelSize: 16; font.bold: true }
+				MouseArea { id: speak; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: neredy.say(msg.text) }
 			}
 		}
 	}

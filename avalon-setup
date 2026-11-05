@@ -45,6 +45,16 @@ metamelayer sign
 say "Building Avalon (this is the long part: Mango, Quickshell, greetd and what they need)"
 prt-get depinst avalon
 
+say "The Intel graphics for Neredy (Mesa's Vulkan driver)"
+if ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1; then
+	echo "    present"
+else
+	echo "    missing: Mesa was built before the Vulkan loader was here, so it's rebuilt now"
+	prt-get update -fr mesa
+	ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1 && echo "    present now" ||
+		echo "    still missing: Neredy will run on the processor (slower); 'neredy check' says more"
+fi
+
 say "Services: D-Bus, seatd, NetworkManager, Bluetooth and the login screen"
 for s in dbus seatd networkmanager bluetoothd greetd; do
 	grep -q "SERVICES=.*\b$s\b" /etc/rc.conf || sed -i "s|^SERVICES=(\(.*\))|SERVICES=(\1 $s)|" /etc/rc.conf
@@ -60,8 +70,12 @@ done
 # the login screen's user may use the seat too
 getent passwd greeter >/dev/null && usermod -aG video,input,seat greeter
 
+say "Neredy's voice (Irina, about 60 MB) for reading Russian aloud"
+su - "$USER_NAME" -c 'neredy voice irina' || echo "    skipped: run 'neredy voice' later"
+
 say "Avalon's name"
 install -m 644 /usr/share/avalon/os-release /etc/os-release
 
 say "Done. Reboot: the Garden System's login screen will greet you."
+echo "   Neredy needs a model once:  neredy setup small   (or: large, for the best Russian tutor)"
 echo "   Later: 'sudo metamelayer upgrade' to update, 'avalon' for Avalon's own commands."

@@ -7,6 +7,9 @@
 #   neredy stop                  stop it now
 #   neredy status                no-model / stopped / starting / ready
 #   neredy ask "question"        ask from the terminal
+#   neredy voice [NAME]          download a Russian voice: irina (default), denis, dmitri, ruslan
+#   neredy say "text"            read the Russian in a text aloud (the rest is skipped)
+#   neredy check                 is the model there, is the voice, can it use the graphics?
 #
 # The server listens on 127.0.0.1:11434 only, and stops itself after 15 idle minutes,
 # so it isn't holding memory or battery when you're not talking to it.
@@ -19,6 +22,10 @@ URL=http://127.0.0.1:$PORT
 IDLE=${NEREDY_IDLE:-900}
 HF=https://huggingface.co
 mkdir -p "$DATA/models" "$STATE"
+
+VOICES=$DATA/voices
+VOICE=$VOICES/current.onnx
+PV=$HF/rhasspy/piper-voices/resolve/main/ru/ru_RU
 
 running() { [ -f "$STATE/server.pid" ] && kill -0 "$(cat "$STATE/server.pid")" 2>/dev/null; }
 ready()   { curl -fs "$URL/health" 2>/dev/null | grep -q '"ok"'; }
@@ -34,6 +41,49 @@ setup() {
 	mv "$DATA/models/$file.part" "$DATA/models/$file"
 	ln -sfn "$file" "$MODEL"
 	echo "==> Neredy will use $file. Super+N to talk."
+	[ -e "$VOICE" ] || voice irina
+}
+
+voice() {
+	name=${1:-irina}
+	case $name in irina|denis|dmitri|ruslan) ;; *) echo "neredy voice irina|denis|dmitri|ruslan" >&2; exit 2 ;; esac
+	mkdir -p "$VOICES"
+	f=ru_RU-$name-medium.onnx
+	echo "==> the voice $name, from $HF/rhasspy/piper-voices"
+	for x in $f $f.json; do
+		curl -fL -C - --retry 5 -o "$VOICES/$x.part" "$PV/$name/medium/$x"
+		mv "$VOICES/$x.part" "$VOICES/$x"
+	done
+	ln -sfn "$f" "$VOICE"
+	ln -sfn "$f.json" "$VOICE.json"
+	echo "==> Neredy speaks with $name's voice."
+}
+
+say() {
+	[ -e "$VOICE" ] || { echo "no voice yet: neredy voice" >&2; exit 3; }
+	# only the Russian: brackets (transliterations) and Latin text are left out
+	russian=$(printf '%s' "$*" | python3 -c '
+import re, sys
+t = re.sub(r"\([^)]*\)", " ", sys.stdin.read())
+runs = [m.strip(" «»,;:-") for m in re.findall(r"[А-Яа-яЁё][А-Яа-яЁё0-9 ,.!?;:«»—–-]*", t)]
+# a lone Russian word inside English (a quoted example) is skipped, unless it is a sentence (Почти!)
+print(" ".join(r for r in runs if len(r.split()) > 1 or r[-1:] in "!?."))')
+	[ -n "$russian" ] || exit 0
+	rate=$(sed -n 's/.*"sample_rate": *\([0-9]*\).*/\1/p' "$VOICE.json" | head -n 1)
+	printf '%s\n' "$russian" | piper --model "$VOICE" --output_raw 2>/dev/null |
+		if command -v pw-cat >/dev/null; then pw-cat --playback --rate "${rate:-22050}" --format s16 --channels 1 -
+		else aplay -q -r "${rate:-22050}" -f S16_LE -t raw -c 1 -; fi
+}
+
+check() {
+	[ -e "$MODEL" ] && echo "model:    $(readlink "$MODEL")" || echo "model:    none yet (neredy setup small|large)"
+	[ -e "$VOICE" ] && echo "voice:    $(readlink "$VOICE")" || echo "voice:    none yet (neredy voice)"
+	if ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1; then
+		echo "graphics: Intel Vulkan driver present: the model runs on the graphics"
+	else
+		echo "graphics: no Intel Vulkan driver: the model runs on the processor (slower)."
+		echo "          To fix: sudo prt-get depinst vulkan-loader && sudo prt-get update -fr mesa"
+	fi
 }
 
 start() {
@@ -55,6 +105,9 @@ start() {
 
 case ${1:-} in
 	setup)  shift; setup "$@" ;;
+	voice)  shift; voice "$@" ;;
+	say)    shift; say "$@" ;;
+	check)  check ;;
 	start)  start ;;
 	stop)   running && kill "$(cat "$STATE/server.pid")"; rm -f "$STATE/server.pid" ;;
 	touch)  date +%s > "$STATE/last-used" ;;
@@ -72,5 +125,5 @@ case ${1:-} in
 		curl -fs "$URL/v1/chat/completions" -H 'Content-Type: application/json' \
 			-d "{\"messages\":[{\"role\":\"system\",\"content\":\"You are Neredy, the assistant of Avalon, a Linux system. Answer briefly, in British English.\"},{\"role\":\"user\",\"content\":\"$q\"}],\"chat_template_kwargs\":{\"enable_thinking\":false}}" |
 			sed -n 's/.*"content":"\(.*\)"}.*/\1/p' | sed 's/\\n/\n/g; s/\\"/"/g' ;;
-	*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+	*) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
