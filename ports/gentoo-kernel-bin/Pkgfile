@@ -1,0 +1,28 @@
+# Description: Gentoo's distribution kernel, prebuilt by Gentoo (Linux with Gentoo's patches): nothing to compile
+# URL: https://wiki.gentoo.org/wiki/Project:Distribution_Kernel
+# Maintainer: Avalon
+# Depends on: linux-firmware
+
+# The disc, build/make-iso, packs this same kernel without pkgmk (it runs on Arch): keep the two alike.
+name=gentoo-kernel-bin
+version=7.3.1
+release=1
+source=(https://distfiles.gentoo.org/pub/proj/dist-kernel/binpkg/amd64/${version%.*}/gentoo-kernel-$version-1.amd64.gpkg.tar)
+
+build() {
+  # NVMe, ext4, XFS and Btrfs are built in, so it boots without an initramfs; the Panther Lake
+  # graphics (xe), NPU (ivpu), Wi-Fi 7 (iwlmld) and sound (SOF) are modules. Gentoo ships the
+  # kernel inside a unified image (uki.efi, with a generic initramfs): its .linux section is the
+  # bzImage itself (bzImage in the package is an empty placeholder)
+  local kv=$version-gentoo-dist-bin src=image/usr/src/linux-$version-gentoo-dist-bin
+  cd gentoo-kernel-$version-1
+  xz -dc image.tar.xz | tar -x --wildcards "image/lib/modules/$kv/*" \
+    "$src/arch/x86/boot/uki.efi" "$src/System.map" "$src/.config"
+  install -d $PKG/boot $PKG/lib/modules
+  objcopy --dump-section .linux=$PKG/boot/vmlinuz-$kv $src/arch/x86/boot/uki.efi
+  chmod 644 $PKG/boot/vmlinuz-$kv
+  cp -a image/lib/modules/$kv $PKG/lib/modules/
+  rm -f $PKG/lib/modules/$kv/{build,source,vmlinuz,config,System.map}
+  install -m 644 $src/System.map $PKG/boot/System.map-$kv
+  install -m 644 $src/.config $PKG/boot/config-$kv
+}

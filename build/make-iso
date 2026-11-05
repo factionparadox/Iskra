@@ -1,210 +1,136 @@
 #!/bin/sh
-# make-iso: build the Avalon install disc on your own machine (Arch, or Arch on WSL). As root:
+# make-iso: make the Avalon install disc on your own machine (Arch, or Arch on WSL). As root:
 #
 #     sudo build/make-iso                     # (from this repo)
 #     sudo NEREDY_MODEL=small build/make-iso  # also put Neredy's small model (~2.5 GB) on the disc
 #
-# It takes the official CRUX 3.8 ISO, unpacks its packages into a CRUX build system under
-# $WORK, and there brings CRUX's ports up to date and compiles everything Avalon needs that the
-# ISO doesn't carry (Avalon's kernel, Mango, Quickshell, greetd, PipeWire...), showing every
-# build. Then it adds those packages and an installer to the ISO:  avalon-1-iskra.iso  here.
-#
-# If anything fails, fix it and run the same command again: finished steps and built packages
-# are kept, so it carries on from where it stopped. Nothing here touches your Arch system
-# except installing xorriso and bsdtar; the build system lives in $WORK.
+# Nothing is compiled here: it downloads and checks the official CRUX 3.8 ISO, Gentoo's
+# prebuilt kernel, current firmware, a Gentoo base system with Portage and Neredy's voice, packs
+# the kernel and firmware as CRUX packages, and adds them, Avalon's ports and the installer to
+# the ISO: avalon-1-iskra.iso, here. Avalon itself is compiled on the laptop, on its first boot.
+# Downloads are kept in $WORK, so running it again only fetches what's new.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WORK:-/var/tmp/avalon-iso}
 OUT=${OUT:-$REPO/avalon-1-iskra.iso}
-MIRROR=${MIRROR:-https://ftp.spline.inf.fu-berlin.de/pub/crux/crux-3.8/iso}
-ISO=$WORK/crux-3.8.iso
-ROOT=$WORK/root
+CRUX=${CRUX_MIRROR:-https://ftp.spline.inf.fu-berlin.de/pub/crux/crux-3.8/iso}
+GENTOO=https://distfiles.gentoo.org
+# the firmware version CRUX's own opt/linux-firmware port has, so prt-get sees it as current
+FIRMWARE=20261019
 PV=https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/irina/medium
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;35mmake-iso: %s\033[0m\n' "$*" >&2; exit 1; }
+get() { [ -s "$2" ] && [ ! -f "$2.part" ] && return 0; curl -fL -C - --retry 5 -o "$2.part" "$1" && mv "$2.part" "$2"; }
+fresh() { rm -f "$2"; curl -fsSL --retry 5 -o "$2" "$1"; }   # small files: always the latest
 
 [ "$(id -u)" = 0 ] || die "run it as root: sudo $0"
-mkdir -p "$WORK"
+mkdir -p "$WORK/dl" "$WORK/pkgs"
 free=$(df -Pk "$WORK" | awk 'NR == 2 {print int($4 / 1048576)}')
-[ "$free" -ge 40 ] || die "$WORK has ${free} GB free; the build needs about 40 GB (WORK=/somewhere/else to move it)"
+[ "$free" -ge 15 ] || die "$WORK has ${free} GB free; about 15 GB is needed (WORK=/somewhere/else to move it)"
 
-say "Tools on this machine: xorriso, bsdtar, git, curl"
-if command -v pacman >/dev/null; then
-	pacman -S --needed --noconfirm libisoburn libarchive git curl
-fi
-for t in xorriso bsdtar git curl sha256sum chroot; do command -v $t >/dev/null || die "missing: $t"; done
+say "Tools on this machine"
+command -v pacman >/dev/null && pacman -S --needed --noconfirm libisoburn libarchive git curl make zstd xz binutils
+for t in xorriso bsdtar git curl make zstd xz objcopy sha256sum sha512sum md5sum bash; do
+	command -v $t >/dev/null || die "missing: $t"
+done
+cd "$WORK/dl"
 
-say "The CRUX 3.8 ISO (from $MIRROR)"
-cd "$WORK"
-[ -f crux-3.8.sha256 ] || curl -fL -o crux-3.8.sha256 "$MIRROR/crux-3.8.sha256"
-if ! sha256sum -c crux-3.8.sha256 >/dev/null 2>&1; then
-	curl -fL -C - --retry 5 -o crux-3.8.iso "$MIRROR/crux-3.8.iso"
-fi
+say "CRUX 3.8"
+fresh "$CRUX/crux-3.8.sha256" crux-3.8.sha256
+get "$CRUX/crux-3.8.iso" crux-3.8.iso
 sha256sum -c crux-3.8.sha256
 
-if [ ! -d "$WORK/crux/core" ]; then
-	say "Unpacking the ISO's packages"
-	rm -rf "$WORK/crux"
-	xorriso -osirrox on -indev "$ISO" -extract /crux "$WORK/crux"
-	chmod -R u+w "$WORK/crux"
+say "Gentoo's prebuilt kernel"
+eval "$(grep -E '^(version|release)=' "$REPO/ports/gentoo-kernel-bin/Pkgfile")"
+gk=gentoo-kernel-$version-1.amd64.gpkg.tar
+get "$GENTOO/pub/proj/dist-kernel/binpkg/amd64/${version%.*}/$gk" "$gk"
+fresh "https://gitweb.gentoo.org/repo/gentoo.git/plain/sys-kernel/gentoo-kernel-bin/Manifest" kernel.Manifest
+want=$(awk -v f="$gk" '$1 == "DIST" && $2 == f {for (i = 3; i < NF; i++) if ($i == "SHA512") print $(i + 1)}' kernel.Manifest)
+[ -n "$want" ] || die "Gentoo's Manifest doesn't list $gk (has the port's version gone from Gentoo?)"
+echo "$want  $gk" | sha512sum -c
+kpkg="$WORK/pkgs/gentoo-kernel-bin#$version-$release.pkg.tar.xz"
+
+say "Firmware ($FIRMWARE)"
+fw=linux-firmware-$FIRMWARE.tar.xz
+get "https://cdn.kernel.org/pub/linux/kernel/firmware/$fw" "$fw"
+fresh https://cdn.kernel.org/pub/linux/kernel/firmware/sha256sums.asc firmware.sha256
+grep " $fw\$" firmware.sha256 | sha256sum -c
+fpkg="$WORK/pkgs/linux-firmware#$FIRMWARE-1.pkg.tar.xz"
+
+say "Gentoo, with Portage (the escape hatch)"
+fresh "$GENTOO/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" stage3.txt
+s3=$(grep -m1 '^[0-9].*stage3-amd64-openrc-.*\.tar\.xz' stage3.txt | cut -d' ' -f1)
+[ -n "$s3" ] || die "can't find the latest stage3 in stage3.txt"
+get "$GENTOO/releases/amd64/autobuilds/$s3" "${s3##*/}"
+fresh "$GENTOO/releases/amd64/autobuilds/$s3.sha256" stage3.sha256
+grep " ${s3##*/}\$" stage3.sha256 | sha256sum -c
+ls stage3-amd64-openrc-*.tar.xz | grep -v "^${s3##*/}\$" | xargs -r rm -f
+fresh "$GENTOO/snapshots/gentoo-latest.tar.xz.md5sum" portage.md5
+rm -f gentoo-latest.tar.xz; get "$GENTOO/snapshots/gentoo-latest.tar.xz" gentoo-latest.tar.xz
+md5sum -c portage.md5
+
+say "Neredy's voice (Irina)"
+for x in ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json; do get "$PV/$x" "$x"; done
+if [ "${NEREDY_MODEL:-}" = small ]; then
+	say "Neredy's small model (Qwen3 4B)"
+	get https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf neredy-model.gguf
 fi
 
-# the build system: mounts in, and out again however this script ends
-mounted=
-cleanup() {
-	[ -n "$mounted" ] || return 0
-	for d in media/crux tmp run sys proc dev/pts dev; do umount "$ROOT/$d" 2>/dev/null || true; done
+# a CRUX package is a tar of the files, named name#version-release, owned by root
+pack() {
+	( cd "$1" && bsdtar --uid 0 --gid 0 --uname root --gname root --options xz:threads=0 \
+		-cJf "$2.part" $(ls -A) ) && mv "$2.part" "$2"
 }
-trap cleanup EXIT INT TERM
-enter() {
-	for d in dev dev/pts proc sys run tmp media/crux etc; do mkdir -p "$ROOT/$d"; done
-	mount --bind /dev "$ROOT/dev"
-	mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts "$ROOT/dev/pts"
-	mount -t proc proc "$ROOT/proc"
-	mount -t sysfs sysfs "$ROOT/sys"
-	mount -t tmpfs tmpfs "$ROOT/run"
-	mount -t tmpfs tmpfs "$ROOT/tmp"
-	mount --bind "$WORK/crux" "$ROOT/media/crux"
-	mounted=1
-	cp -L /etc/resolv.conf "$ROOT/etc/resolv.conf"
-}
-inroot() { chroot "$ROOT" /usr/bin/env -i HOME=/root TERM="${TERM:-linux}" PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 
-if [ ! -f "$ROOT/.avalon-base" ]; then
-	say "A CRUX build system from the ISO's core, opt and xorg packages (in $ROOT)"
-	rm -rf "$ROOT"; mkdir -p "$ROOT"
-	for f in "$WORK"/crux/core/*.pkg.tar.*; do bsdtar -C "$ROOT" -xpf "$f"; done
-	mkdir -p "$ROOT/var/lib/pkg"; : > "$ROOT/var/lib/pkg/db"
-	enter
-	inroot /bin/sh -c 'for c in core opt xorg; do
-		for f in /media/crux/$c/*.pkg.tar.*; do echo "    $c/${f##*/}"; pkgadd -f "$f" >/dev/null; done
-	done'
-	touch "$ROOT/.avalon-base"
-else
-	enter
+if [ ! -f "$kpkg" ]; then
+	say "Packing the kernel for CRUX (the gentoo-kernel-bin port's own build step)"
+	rm -rf "$WORK/k"; mkdir -p "$WORK/k/src" "$WORK/k/pkg"
+	tar -xf "$gk" -C "$WORK/k/src"
+	SRC=$WORK/k/src PKG=$WORK/k/pkg PF=$REPO/ports/gentoo-kernel-bin/Pkgfile bash -ec \
+		'cd "$SRC"; . "$PF"; build'
+	pack "$WORK/k/pkg" "$kpkg"
+	rm -rf "$WORK/k"
 fi
+ls -lh "$kpkg"
 
-say "Avalon's ports (this repo, as committed)"
-rm -rf "$ROOT/usr/ports/avalon"
-git -c safe.directory='*' clone -q "$REPO" "$ROOT/usr/ports/avalon"
-git -C "$ROOT/usr/ports/avalon" remote set-url origin https://github.com/factionparadox/Iskra
-git -C "$ROOT/usr/ports/avalon" log --oneline -1
-
-cat > "$ROOT/tmp/avalon-build" <<'EOS'
-#!/bin/bash
-set -e
-say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-cd /
-
-say "CRUX's ports, brought up to date (core, opt, xorg, contrib)"
-[ -f /etc/ports/contrib.rsync.inactive ] && mv /etc/ports/contrib.rsync.inactive /etc/ports/contrib.rsync
-ports -u
-
-conf=/etc/prt-get.conf
-sed -i 's|^#[[:space:]]*prtdir /usr/ports/contrib|prtdir /usr/ports/contrib|' $conf
-grep -q '^prtdir /usr/ports/contrib' $conf || echo 'prtdir /usr/ports/contrib' >> $conf
-grep -q '^prtdir /usr/ports/avalon/ports' $conf || echo 'prtdir /usr/ports/avalon/ports' >> $conf
-sed -i 's|^#[[:space:]]*runscripts.*|runscripts yes|' $conf
-grep -q '^runscripts yes' $conf || echo 'runscripts yes' >> $conf
-
-mkdir -p /var/cache/avalon/pkgs /var/cache/avalon/src /var/cache/avalon/work
-if ! grep -q '^# Avalon build' /etc/pkgmk.conf; then
-	cat >> /etc/pkgmk.conf <<EOF
-# Avalon build
-export MAKEFLAGS="-j$(nproc)"
-PKGMK_PACKAGE_DIR="/var/cache/avalon/pkgs"
-PKGMK_SOURCE_DIR="/var/cache/avalon/src"
-PKGMK_WORK_DIR="/var/cache/avalon/work/\$name"
-EOF
+if [ ! -f "$fpkg" ]; then
+	say "Packing the firmware for CRUX (compressed with zstd, which the kernel reads)"
+	rm -rf "$WORK/f"; mkdir -p "$WORK/f/pkg"
+	tar -xf "$fw" -C "$WORK/f"
+	make -C "$WORK/f/linux-firmware-$FIRMWARE" DESTDIR="$WORK/f/pkg" FIRMWAREDIR=/lib/firmware install-zst
+	pack "$WORK/f/pkg" "$fpkg"
+	rm -rf "$WORK/f"
 fi
-
-say "A key to sign Avalon's ports with, for this build only (it stays in here)"
-install -m 755 /usr/ports/avalon/desktop/usr/bin/metamelayer /usr/bin/metamelayer
-metamelayer key
-metamelayer sign
-
-closure() { local l; l=$(prt-get quickdep avalon); case " $l " in *" avalon "*) ;; *) l="$l avalon" ;; esac; echo $l; }
-
-say "Bringing what Avalon needs up to date (older on the ISO than in today's ports)"
-old=" $(prt-get quickdiff) "
-for p in $(closure); do
-	case "$old" in *" $p "*) say "update: $p"; prt-get update "$p" ;; esac
-done
-
-say "Building what Avalon needs that the ISO doesn't have"
-prt-get depinst avalon
-
-say "Anything an update left broken (revdep)"
-broken=$(revdep 2>/dev/null || true)
-for p in $(closure); do
-	case " $(echo $broken) " in *" $p "*) say "rebuild: $p"; prt-get update -fr "$p" ;; esac
-done
-
-say "Mesa's Vulkan driver for the Intel graphics (Neredy uses it)"
-if ! ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1; then
-	prt-get update -fr mesa
-fi
-ls /usr/share/vulkan/icd.d/
-
-say "The list of packages for the disc"
-for p in $(closure); do
-	v=$(pkginfo -i | awk -v n="$p" '$1 == n {print $2}')
-	[ -n "$v" ] || { echo "not installed: $p" >&2; exit 1; }
-	echo "$p#$v"
-done > /var/cache/avalon/packages.list
-wc -l < /var/cache/avalon/packages.list
-EOS
-chmod +x "$ROOT/tmp/avalon-build"
-inroot /tmp/avalon-build
+ls -lh "$fpkg"
 
 say "Putting the disc together"
 OV=$WORK/overlay
-rm -rf "$OV"; mkdir -p "$OV/avalon/packages" "$OV/avalon/ports" "$OV/avalon/voices"
-cp "$ROOT/var/cache/avalon/packages.list" "$OV/avalon/"
-n=0
-while read -r e; do
-	for f in "$ROOT"/var/cache/avalon/pkgs/"$e".pkg.tar.*; do
-		[ -f "$f" ] && { cp "$f" "$OV/avalon/packages/"; n=$((n + 1)); }
-	done
-done < "$OV/avalon/packages.list"
-echo "    $n packages built here, $(wc -l < "$OV/avalon/packages.list") in all (the rest are on the ISO)"
-
-for c in core opt xorg contrib; do
-	cp -a "$ROOT/usr/ports/$c" "$OV/avalon/ports/"
-done
-git -c safe.directory='*' clone -q "$REPO" "$OV/avalon/ports/avalon"   # clean: no signatures from this build's key
-git -C "$OV/avalon/ports/avalon" remote set-url origin https://github.com/factionparadox/Iskra
+rm -rf "$OV"; mkdir -p "$OV/avalon/packages" "$OV/avalon/voices" "$OV/avalon/gentoo"
+ln "$kpkg" "$fpkg" "$OV/avalon/packages/" 2>/dev/null || cp "$kpkg" "$fpkg" "$OV/avalon/packages/"
+git -c safe.directory='*' clone -q "$REPO" "$OV/avalon/repo"
+git -C "$OV/avalon/repo" remote set-url origin https://github.com/factionparadox/Iskra
+git -C "$OV/avalon/repo" log --oneline -1
 cp "$REPO/build/iso/avalon-install" "$OV/avalon-install"
-
-say "Neredy's voice (Irina)"
-for x in ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json; do
-	[ -f "$WORK/$x" ] || curl -fL -C - --retry 5 -o "$WORK/$x" "$PV/$x"
-	cp "$WORK/$x" "$OV/avalon/voices/"
-done
-
-if [ "${NEREDY_MODEL:-}" = small ]; then
-	say "Neredy's small model (Qwen3 4B)"
-	m=Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-	[ -f "$WORK/$m" ] || curl -fL -C - --retry 5 -o "$WORK/$m" \
-		"https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/$m"
-	cp "$WORK/$m" "$OV/avalon/neredy-model.gguf"
-fi
+cp ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json "$OV/avalon/voices/"
+cp "${s3##*/}" gentoo-latest.tar.xz "$OV/avalon/gentoo/"
+[ "${NEREDY_MODEL:-}" = small ] && cp neredy-model.gguf "$OV/avalon/"
 
 # the boot menu says Avalon
-xorriso -osirrox on -indev "$ISO" -extract /boot/grub/grub.cfg "$WORK/grub.cfg" 2>/dev/null
-chmod u+w "$WORK/grub.cfg"
-sed -i 's|Install/Upgrade CRUX 3.8|Install Avalon 1 (Iskra)|g' "$WORK/grub.cfg"
+rm -f grub.cfg
+xorriso -osirrox on -indev crux-3.8.iso -extract /boot/grub/grub.cfg grub.cfg 2>/dev/null
+chmod u+w grub.cfg
+sed -i 's|Install/Upgrade CRUX 3.8|Install Avalon 1 (Iskra)|g' grub.cfg
 
 say "Writing $OUT"
 rm -f "$OUT"
-xorriso -indev "$ISO" -outdev "$OUT" -compliance iso_9660_level=3 \
+xorriso -indev crux-3.8.iso -outdev "$OUT" -compliance iso_9660_level=3 \
 	-map "$OV/avalon" /avalon -map "$OV/avalon-install" /avalon-install \
-	-map "$WORK/grub.cfg" /boot/grub/grub.cfg \
+	-map grub.cfg /boot/grub/grub.cfg \
 	-boot_image any replay
 [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:" "$OUT"
 (cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
 ls -lh "$OUT"
 
-say "Done. Write it to a USB stick (Rufus on Windows, or dd), boot it, then follow 'Installing' in README.md"
+say "Done. Write it to a USB stick (Rufus, or dd), boot it, and follow 'On the laptop' in README.md"

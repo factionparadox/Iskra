@@ -7,58 +7,106 @@
 # Then:
 #     /media/avalon-install YOURNAME
 #
-# Nothing is downloaded or compiled: every package is on the disc. It installs CRUX's core, then
-# Avalon and everything it needs, writes /etc/fstab, sets you up, and installs GRUB.
+# Offline, from the disc: CRUX's core, Gentoo's prebuilt kernel (7.3) and current firmware,
+# what the first boot needs to get online and build, a Gentoo system with Portage (the escape
+# hatch: metamelayer gentoo), fstab, your user, GRUB. It asks for your Wi-Fi, if you want, so the
+# first boot can get online by itself; the first boot then builds Avalon on the laptop.
 set -e
 USER_NAME=${1:-}
 ROOT=/mnt
 MEDIA=$(cd "$(dirname "$0")" && pwd)
-LIST=$MEDIA/avalon/packages.list
+DEPS=$MEDIA/crux/setup.dependencies
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;35mavalon-install: %s\033[0m\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run it as root"
 [ -n "$USER_NAME" ] || die "say whose laptop it is: $0 YOURNAME"
-[ -f "$LIST" ] || die "this isn't an Avalon disc (no $LIST)"
+[ -d "$MEDIA/avalon/repo" ] || die "this isn't an Avalon disc (no $MEDIA/avalon)"
 grep -q " $ROOT " /proc/mounts || die "nothing is mounted on $ROOT: mount your root partition there first"
 ESP=$(awk -v r="$ROOT" '$2 ~ "^"r"/" && $3 == "vfat" {print $2; exit}' /proc/mounts)
 [ -n "$ESP" ] || die "the EFI partition isn't mounted under $ROOT (e.g. $ROOT/boot/efi)"
 
 installed() { pkginfo -r $ROOT -i 2>/dev/null | awk -v n="$1" '$1 == n {print $2}'; }
-add() {  # add NAME#VERSION-RELEASE from wherever it is on the disc
-	local entry=$1 name=${1%%#*} want=${1#*#} f have
-	f=$(find "$MEDIA/avalon/packages" "$MEDIA/crux/core" "$MEDIA/crux/opt" "$MEDIA/crux/xorg" \
-		-name "$entry.pkg.tar.*" 2>/dev/null | head -1)
-	[ -n "$f" ] || die "$entry isn't on the disc"
-	have=$(installed "$name")
-	if [ "$have" = "$want" ]; then return 0
-	elif [ -n "$have" ]; then echo "    $name $have -> $want"; pkgadd -r $ROOT -u "$f"
-	else echo "    $name $want"; pkgadd -r $ROOT "$f"; fi
+add() {  # add a package by name: Avalon's own copy on the disc first, else CRUX's
+	local name=$1 f e
+	f=$(ls "$MEDIA"/avalon/packages/"$name"#*.pkg.tar.* 2>/dev/null | head -1)
+	[ -n "$f" ] || f=$(ls "$MEDIA"/crux/{core,opt,xorg}/"$name"#*.pkg.tar.* 2>/dev/null | head -1)
+	[ -n "$f" ] || die "$name isn't on the disc"
+	e=$(basename "$f"); e=${e%.pkg.tar.*}
+	[ "$(installed "$name")" = "${e#*#}" ] && return 0
+	echo "    $name ${e#*#}"
+	if [ -n "$(installed "$name")" ]; then pkgadd -r $ROOT -u "$f"; else pkgadd -r $ROOT "$f"; fi
 }
+
+if [ ! -f /tmp/avalon-wifi ]; then
+	say "Wi-Fi for the first boot (it builds Avalon, so it needs the internet)"
+	echo "    Press Enter with no name to skip (a cable, or set it up then)."
+	read -r -p "    Wi-Fi name: " ssid
+	if [ -n "$ssid" ]; then read -r -s -p "    Password: " psk; echo; fi
+	printf '%s\n%s\n' "${ssid:-}" "${psk:-}" > /tmp/avalon-wifi
+fi
+ssid=$(sed -n 1p /tmp/avalon-wifi); psk=$(sed -n 2p /tmp/avalon-wifi)
 
 say "CRUX's core"
 mkdir -p $ROOT/var/lib/pkg && touch $ROOT/var/lib/pkg/db
 for f in "$MEDIA"/crux/core/*.pkg.tar.*; do
-	e=$(basename "$f"); e=${e%.pkg.tar.*}
-	add "$e"
+	n=$(basename "$f"); add "${n%%#*}"
 done
 
-say "Avalon and everything it needs ($(wc -l < "$LIST") packages)"
-while read -r e; do [ -n "$e" ] && add "$e"; done < "$LIST"
+say "Gentoo's kernel, firmware, and what the first boot needs (Wi-Fi, GRUB, prt-utils)"
+add linux-firmware
+add gentoo-kernel-bin
+for p in wpa_supplicant grub2-efi prt-utils; do
+	for d in $(grep "^$p:" "$DEPS" | cut -d: -f2); do add "$d"; done
+done
+for k in $ROOT/lib/modules/*-gentoo-dist-bin; do chroot $ROOT depmod -a "${k##*/}"; done
 
-say "Ports trees (CRUX's and Avalon's) for building and updating later"
-mkdir -p $ROOT/usr/ports
-cp -a "$MEDIA"/avalon/ports/. $ROOT/usr/ports/
+say "The rest of the disc's packages, kept for the first boot (it installs them instead of compiling, where they're current)"
+mkdir -p $ROOT/var/cache/avalon/disc
+cp "$MEDIA"/crux/opt/*.pkg.tar.* "$MEDIA"/crux/xorg/*.pkg.tar.* $ROOT/var/cache/avalon/disc/
+ls $ROOT/var/cache/avalon/disc | wc -l
 
-if [ -d "$MEDIA/avalon/voices" ]; then
-	mkdir -p $ROOT/usr/share/avalon/voices
-	cp "$MEDIA"/avalon/voices/* $ROOT/usr/share/avalon/voices/
+say "Avalon's ports"
+rm -rf $ROOT/usr/ports/avalon; mkdir -p $ROOT/usr/ports
+cp -a "$MEDIA/avalon/repo" $ROOT/usr/ports/avalon
+install -m 755 "$MEDIA/avalon/repo/build/iso/avalon-firstboot" $ROOT/usr/sbin/avalon-firstboot
+mkdir -p $ROOT/var/lib/avalon && echo "$USER_NAME" > $ROOT/var/lib/avalon/firstboot
+grep -q avalon-firstboot $ROOT/etc/rc.local || echo '[ -x /usr/sbin/avalon-firstboot ] && /usr/sbin/avalon-firstboot' >> $ROOT/etc/rc.local
+
+if [ -n "$ssid" ]; then
+	umask 077
+	printf 'ctrl_interface=/run/wpa_supplicant\nnetwork={\n\tssid="%s"\n\tpsk="%s"\n}\n' "$ssid" "$psk" \
+		> $ROOT/etc/wpa_supplicant-avalon.conf
+	# and for NetworkManager, which takes over once Avalon is built
+	mkdir -p $ROOT/etc/NetworkManager/system-connections
+	printf '[connection]\nid=%s\ntype=wifi\n\n[wifi]\nssid=%s\nmode=infrastructure\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
+		"$ssid" "$ssid" "$psk" > "$ROOT/etc/NetworkManager/system-connections/$ssid.nmconnection"
+	umask 022
+	echo "    $ssid saved"
 fi
+
+mkdir -p $ROOT/usr/share/avalon/voices
+cp "$MEDIA"/avalon/voices/* $ROOT/usr/share/avalon/voices/
 if [ -f "$MEDIA/avalon/neredy-model.gguf" ]; then
 	say "Neredy's model ($(du -h "$MEDIA/avalon/neredy-model.gguf" | cut -f1))"
 	cp "$MEDIA/avalon/neredy-model.gguf" $ROOT/var/tmp/
 fi
+
+say "Gentoo, with Portage: the escape hatch (sudo metamelayer gentoo)"
+if [ ! -x $ROOT/var/lib/gentoo/usr/bin/emerge ]; then
+	mkdir -p $ROOT/var/lib/gentoo
+	tar -xpf "$MEDIA"/avalon/gentoo/stage3-*.tar.xz -C $ROOT/var/lib/gentoo --numeric-owner
+	mkdir -p $ROOT/var/lib/gentoo/var/db/repos/gentoo
+	tar -xpf "$MEDIA"/avalon/gentoo/gentoo-latest.tar.xz -C $ROOT/var/lib/gentoo/var/db/repos/gentoo --strip-components=1
+	cat >> $ROOT/var/lib/gentoo/etc/portage/make.conf <<'EOF'
+
+# Avalon: prefer Gentoo's prebuilt packages, compile only what has none
+FEATURES="${FEATURES} getbinpkg"
+MAKEOPTS="-j8"
+EOF
+fi
+du -sh $ROOT/var/lib/gentoo
 
 say "/etc/fstab"
 if ! grep -qE '^[^#]+[[:space:]]/[[:space:]]' $ROOT/etc/fstab; then
@@ -67,11 +115,10 @@ if ! grep -qE '^[^#]+[[:space:]]/[[:space:]]' $ROOT/etc/fstab; then
 		awk -v r="$ROOT" '$2 == r || $2 ~ "^"r"/" {print $1, $2, $3}' /proc/mounts |
 		while read -r dev mnt fs; do
 			case $dev in /dev/*) ;; *) continue ;; esac
-			uuid=$(blkid -s UUID -o value "$dev")
 			where=${mnt#$ROOT}; where=${where:-/}
 			[ "$where" = / ] && pass=1 || pass=2
 			[ "$fs" = vfat ] && opts=defaults,umask=0077 || opts=defaults,noatime
-			echo "UUID=$uuid  $where  $fs  $opts  0 $pass"
+			echo "UUID=$(blkid -s UUID -o value "$dev")  $where  $fs  $opts  0 $pass"
 		done
 		awk 'NR > 1 && $2 == "partition" {print $1}' /proc/swaps | while read -r dev; do
 			echo "UUID=$(blkid -s UUID -o value "$dev")  swap  swap  defaults  0 0"
@@ -93,27 +140,25 @@ cleanup() { for d in sys/firmware/efi/efivars tmp run sys proc dev/pts dev; do u
 trap cleanup EXIT
 inroot() { chroot $ROOT /usr/bin/env -i HOME=/root TERM="$TERM" PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 
-say "Install scripts (system users and groups for D-Bus, greetd, seatd...)"
-while read -r e; do
-	n=${e%%#*}
-	for s in pre-install post-install; do
-		f=$(ls -d $ROOT/usr/ports/*/"$n"/$s 2>/dev/null | head -1)
-		[ -n "$f" ] || continue
-		echo "    $n: $s"
-		inroot sh "${f#$ROOT}" || echo "    ($n's $s complained; carrying on)"
-	done
-done < "$LIST"
-
-say "Avalon's own settings, and you"
-inroot sh /usr/ports/avalon/avalon-setup --iso "$USER_NAME"
+inroot sh /usr/ports/avalon/avalon-setup --offline "$USER_NAME"
 
 say "root's password"
 inroot passwd root
 
 say "GRUB (UEFI), on ${ESP#$ROOT}"
+cat > $ROOT/etc/default/grub <<'EOF'
+GRUB_DISTRIBUTOR="Avalon"
+GRUB_TIMEOUT=3
+GRUB_CMDLINE_LINUX_DEFAULT="quiet"
+# no initramfs: the kernel finds its root by partition UUID, which it understands by itself
+GRUB_DISABLE_LINUX_UUID=true
+GRUB_DISABLE_LINUX_PARTUUID=false
+GRUB_DISABLE_RECOVERY=true
+EOF
 inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --bootloader-id=Avalon
 inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --removable
-sed -i 's|^#\?GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR="Avalon"|' $ROOT/etc/default/grub 2>/dev/null || true
 inroot grub-mkconfig -o /boot/grub/grub.cfg
+grep -m1 -o 'linux[[:space:]].*' $ROOT/boot/grub/grub.cfg || true
 
-say "Avalon is installed. Take the stick out and type: reboot"
+say "Installed. Take the stick out and type: reboot"
+echo "   The first boot builds Avalon on the laptop (you can watch it), then reboots into the Garden System."

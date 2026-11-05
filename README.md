@@ -38,16 +38,14 @@ No Flatpak: everything is a native package.
 
 ### The disc
 
-Build it on your own machine (Arch, or Arch on WSL), as root, from this repo:
+Make it on your own machine (Arch, or Arch on WSL), as root, from this repo:
 
     sudo build/make-iso
 
-It downloads the official CRUX 3.8 ISO (checking its checksum), makes a CRUX build system from
-its packages in `/var/tmp/avalon-iso`, brings CRUX's ports up to date there and compiles what
-Avalon needs that the ISO lacks: Avalon's own kernel (Linux 7.3, for the Panther Lake graphics;
-CRUX 3.8's ISO has 6.12), Mango, Quickshell, greetd, PipeWire and the rest. Every build is shown.
-If one fails, run the same command again and it carries on. The result is
-`avalon-1-iskra.iso`, with Neredy's Russian voice on it (`NEREDY_MODEL=small` adds her model too).
+Nothing is compiled: it downloads and checks the official CRUX 3.8 ISO, Gentoo's prebuilt
+distribution kernel (Linux 7.3, which knows the Panther Lake graphics; CRUX 3.8's ISO has 6.12),
+current firmware, a Gentoo base system with Portage and Neredy's Russian voice, and writes
+`avalon-1-iskra.iso`. `NEREDY_MODEL=small` puts Neredy's model on it too.
 
 ### On the laptop
 
@@ -57,20 +55,30 @@ If one fails, run the same command again and it carries on. The result is
        mkfs.fat -F32 /dev/nvme0n1p1 && mkfs.ext4 /dev/nvme0n1p2
        mount /dev/nvme0n1p2 /mnt && mkdir -p /mnt/boot/efi && mount /dev/nvme0n1p1 /mnt/boot/efi
 
-3. Install:
+3. Install (offline, from the disc):
 
        /media/avalon-install YOURNAME
 
-   Nothing is downloaded or compiled: it installs CRUX's core and every Avalon package from the
-   disc, writes `/etc/fstab`, creates your user, asks for your and root's passwords, and installs
-   GRUB. Then `reboot` into the Garden System.
+   It asks for your Wi-Fi (for the first boot), then installs CRUX's core, the Gentoo kernel and
+   firmware, Gentoo with Portage, Avalon's ports, `/etc/fstab`, your user (it asks for your and
+   root's passwords) and GRUB.
+4. `reboot`. **The first boot builds Avalon on the laptop**: it gets online, brings CRUX's ports
+   up to date, installs the disc's packages that are still current and compiles the rest
+   (Mango, Quickshell, greetd, PipeWire...), showing every build, then reboots into the Garden
+   System. If a build fails, log in as root, fix it, and run `avalon-firstboot`: it carries on.
+
+### Portage, the escape hatch
+
+Gentoo lives in its own root, `/var/lib/gentoo`, so Portage and CRUX never overwrite each other:
+
+    sudo metamelayer gentoo                 # a shell in Gentoo
+    sudo metamelayer gentoo emerge PACKAGE  # Gentoo's prebuilt packages where there are any
+    sudo metamelayer gentoo run PROGRAM     # run a Gentoo program on Avalon's desktop
 
 ### On an existing CRUX install instead
 
     git clone https://github.com/factionparadox/Iskra /usr/ports/avalon
     /usr/ports/avalon/avalon-setup YOURNAME
-
-This builds everything on the laptop itself with prt-get.
 
 ## Status
 
