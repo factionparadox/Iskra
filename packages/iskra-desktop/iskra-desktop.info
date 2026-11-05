@@ -1,7 +1,0 @@
-PRGNAM="iskra-desktop"
-VERSION="@ISKRA@"
-HOMEPAGE="https://github.com/factionparadox/iskra"
-DOWNLOAD="iskra-source"
-SHA256SUM=""
-REQUIRES="ratpoison polybar dmenu dunst feh slock xss-lock redshift xbanish brightnessctl clipmenu maim x-terminal font-go ly fastfetch xclip libnotify nftables sudo plan9port networkmanager-dmenu sparkpkg"
-MAINTAINER="Iskra"

@@ -1,6 +1,0 @@
-[Desktop Entry]
-Name=Iskra
-Comment=ratpoison, polybar and the Iskra tools
-Exec=/usr/bin/iskra-session
-Type=Application
-DesktopNames=iskra

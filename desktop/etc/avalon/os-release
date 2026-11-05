@@ -1,0 +1,9 @@
+NAME="Avalon"
+PRETTY_NAME="Avalon 1 (Iskra)"
+ID=avalon
+ID_LIKE=crux
+VERSION="1 (Iskra)"
+VERSION_ID=1
+VERSION_CODENAME=iskra
+HOME_URL="https://github.com/factionparadox/Avalon"
+LOGO=avalon

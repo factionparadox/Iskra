@@ -1,7 +1,0 @@
-PRGNAM="ani-cli"
-VERSION="5.1"
-HOMEPAGE="https://github.com/pystardust/ani-cli"
-DOWNLOAD="git+https://github.com/pystardust/ani-cli.git#commit=c99221dcecb35c66815a7a77e5ebebde16c8d06a"
-SHA256SUM="SKIP"
-REQUIRES="aria2 yt-dlp fzf mpv"
-MAINTAINER="Iskra"

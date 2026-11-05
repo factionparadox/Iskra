@@ -1,8 +1,0 @@
-PRGNAM="oxwm"
-VERSION="0.13.0"
-HOMEPAGE="https://github.com/tonybanters/oxwm"
-DOWNLOAD="git+https://github.com/tonybanters/oxwm.git#commit=fc4ada9ac4ee8e34ace203290a2b14d10e4671cc https://www.lua.org/ftp/lua-5.4.8.tar.gz"
-SHA256SUM="SKIP 4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
-REQUIRES=""
-BUILD_REQUIRES="zig"
-MAINTAINER="Iskra"

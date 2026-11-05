@@ -1,7 +1,0 @@
-PRGNAM="font-ipaex"
-VERSION="004.01"
-HOMEPAGE="https://moji.or.jp/ipafont/"
-DOWNLOAD="https://moji.or.jp/wp-content/ipafont/IPAexfont/IPAexfont00401.zip"
-SHA256SUM="bcf8374ab3f9672c421120430dd19a51c99f5265cf06fc340d9a661ddfd7974b"
-REQUIRES=""
-MAINTAINER="Iskra"

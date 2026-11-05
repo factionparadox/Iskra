@@ -1,0 +1,8 @@
+#!/bin/sh
+# garden: talk to the Garden System shell (Quickshell), e.g.  garden launcher | lock | power | keyhelp | neredy
+# Each is a panel the shell opens or closes; the shell answers over Quickshell's IPC.
+[ $# -ge 1 ] || { echo "usage: garden launcher|lock|power|keyhelp|neredy|reload" >&2; exit 2; }
+case $1 in
+  reload) quickshell kill -c garden 2>/dev/null; exec quickshell -c garden -d ;;
+  *)      exec quickshell ipc -c garden call "$1" toggle ;;
+esac

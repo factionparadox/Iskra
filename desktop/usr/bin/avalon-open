@@ -1,0 +1,15 @@
+#!/bin/sh
+# avalon-open: the program behind each application key (Super+W, D, V, E, A, P), whichever is installed.
+have() { command -v "$1" >/dev/null 2>&1; }
+run() { setsid -f "$@" >/dev/null 2>&1; exit 0; }
+case $1 in
+  web)     for p in firefox firefox-bin librewolf; do have $p && run $p; done ;;
+  discord) for p in webcord vesktop discord; do have $p && run $p; done ;;
+  video)   have vlc && run vlc; have mpv && run mpv --player-operation-mode=pseudo-gui ;;
+  files)   for p in thunar pcmanfm caja nautilus; do have $p && run $p; done; have yazi && run kitty yazi ;;
+  anime)   have ani-cli && run kitty --title ani-cli ani-cli ;;
+  vpn)     for p in protonvpn-app protonvpn; do have $p && run $p; done ;;
+  *)       echo "usage: avalon-open web|discord|video|files|anime|vpn" >&2; exit 2 ;;
+esac
+notify-send -a Avalon "Nothing installed for '$1'" "Install one with:  metamelayer install …" 2>/dev/null
+exit 1

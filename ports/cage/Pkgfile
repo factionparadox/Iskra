@@ -1,0 +1,20 @@
+# Description: Wayland kiosk compositor: shows one program full-screen (the Garden System login runs in it)
+# URL: https://github.com/cage-kiosk/cage
+# Maintainer: Avalon
+# Depends on: wlroots
+
+name=cage
+version=0.3.1.20261101
+release=1
+_commit=f551ca26385de6da7413bce94ad95b7509c02546
+source=(https://github.com/cage-kiosk/cage/archive/$_commit/$name-$_commit.tar.gz)
+
+build() {
+  meson setup $name-$_commit build \
+    --prefix=/usr \
+    --buildtype=plain \
+    --wrap-mode nodownload \
+    -D man-pages=disabled
+  meson compile -C build
+  DESTDIR=$PKG meson install -C build
+}
