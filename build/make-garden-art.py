@@ -143,21 +143,23 @@ def crystal(img, cx, cy, size):
     d.rectangle([cx - 2, cy - 2, cx + 2, cy + 2], fill=(255, 63, 90, 255))
 
 
-def plant(d, x, y, kind):
+def plant(d, x, y, kind, k=1.0):
+    """a plant of the garden, k times its full size"""
     if kind == 'frond':   # a red feathery bloom on a pale stalk
-        d.line([(x, y), (x + 2, y - 46)], fill=(214, 206, 186, 255), width=3)
-        for k in range(12):
-            a = math.radians(-180 + k * 15)
-            d.line([(x + 2, y - 46), (x + 2 + math.cos(a) * 30, y - 46 + math.sin(a) * 14)], fill=(176, 40, 36, 255), width=3)
-            d.line([(x + 2, y - 46), (x + 2 + math.cos(a) * 22, y - 50 + math.sin(a) * 10)], fill=(214, 70, 52, 255), width=2)
+        top = y - 46 * k
+        d.line([(x, y), (x + 1, top)], fill=(196, 188, 170, 255), width=max(1, int(3 * k)))
+        for i in range(12):
+            a = math.radians(-180 + i * 15)
+            d.line([(x + 1, top), (x + 1 + math.cos(a) * 30 * k, top + math.sin(a) * 14 * k)], fill=(150, 34, 32, 255), width=max(1, int(2 * k)))
+            d.line([(x + 1, top), (x + 1 + math.cos(a) * 20 * k, top - 3 * k + math.sin(a) * 9 * k)], fill=(196, 62, 46, 255), width=1)
     else:                 # an orange bulb in broad leaves
-        for k in range(6):
-            a = math.radians(-160 + k * 28)
-            d.polygon([(x, y), (x + math.cos(a) * 34, y + math.sin(a) * 20 - 6), (x + math.cos(a + 0.2) * 20, y + math.sin(a) * 10)], fill=(46, 96, 52, 255))
-        d.ellipse([x - 16, y - 40, x + 16, y - 10], fill=(222, 128, 40, 255))
-        d.ellipse([x - 10, y - 36, x + 2, y - 24], fill=(244, 176, 90, 255))
-        for k in (-8, 0, 8):
-            d.line([(x + k, y - 40), (x + k * 0.6, y - 12)], fill=(190, 98, 30, 255), width=1)
+        for i in range(6):
+            a = math.radians(-160 + i * 28)
+            d.polygon([(x, y), (x + math.cos(a) * 34 * k, y + (math.sin(a) * 20 - 6) * k), (x + math.cos(a + 0.2) * 20 * k, y + math.sin(a) * 10 * k)], fill=(40, 84, 46, 255))
+        d.ellipse([x - 16 * k, y - 40 * k, x + 16 * k, y - 10 * k], fill=(196, 112, 36, 255))
+        d.ellipse([x - 10 * k, y - 36 * k, x + 2 * k, y - 24 * k], fill=(226, 160, 82, 255))
+        for j in (-8, 0, 8):
+            d.line([(x + j * k, y - 40 * k), (x + j * 0.6 * k, y - 12 * k)], fill=(168, 88, 28, 255), width=1)
 
 
 
@@ -289,138 +291,158 @@ def hud(img):
     d.rectangle([mx + mw * 0.55, my + 6, mx + mw * 0.55 + 2, my + mh - 6], fill=(255, 40, 160, 255))
 
 
+def texture(h, w, base, spread, seed, grain=1.2, levels=5):
+    """a bitmap-like texture: clustered noise in a few tones of one colour, as the console's
+    textured billboards and ground were"""
+    g = np.random.default_rng(seed)
+    n = g.random((h, w)).astype(np.float32)
+    n = np.asarray(Image.fromarray((n * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(grain))).astype(np.float32) / 255
+    n = (n - n.min()) / max(1e-6, n.max() - n.min())
+    q = np.floor(n * levels) / (levels - 1)
+    a = np.zeros((h, w, 3), np.float32)
+    for i in range(3):
+        a[:, :, i] = base[i] * (1 - spread / 2 + spread * q)
+    return np.clip(a, 0, 255).astype(np.uint8)
+
+
+def pine_mask(d, x, base, h):
+    """a conifer silhouette, ragged at every tier, into a mask"""
+    tiers = int(6 + h / 18)
+    d.line([(x, base), (x, base - h * 0.95)], fill=255, width=max(1, int(h / 45)))
+    for t in range(tiers):
+        f = t / tiers
+        ty = base - h + h * f * 0.94
+        hw = h * (0.05 + 0.2 * f) * rng.uniform(0.75, 1.2)
+        drop = h * 0.13
+        pts = [(x, ty)]
+        for k in range(6):   # a ragged lower edge to each tier
+            fx = -1 + k / 2.5
+            pts.append((x + hw * fx, ty + drop * (0.7 + 0.4 * rng.random())))
+        d.polygon(pts, fill=255)
+
+
 def wallpaper(pasha):
-    # painted at the console's sort of resolution, then scaled up with hard pixels
-    w, h = 960, 640
-    mist = (200, 198, 218)
-    sky = gradient(w, h, [(0, (120, 116, 166)), (0.22, (156, 152, 192)), (0.48, mist), (1, mist)])
+    # painted near the console's own resolution, scaled up four times with hard pixels
+    w, h = 720, 480
+    mist = (176, 174, 196)
+    sky = gradient(w, h, [(0, (104, 102, 140)), (0.25, (138, 136, 168)), (0.5, mist), (1, mist)])
     img = Image.fromarray(sky.astype(np.uint8)).convert('RGBA')
-    d = ImageDraw.Draw(img)
-    # soft cloud banks
+
+    # cloud: soft streaks
     clouds = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     cd = ImageDraw.Draw(clouds)
-    for _ in range(18):
-        x, y = rng.uniform(-60, w), rng.uniform(40, 200)
-        cd.ellipse([x, y, x + rng.uniform(140, 300), y + rng.uniform(18, 40)], fill=(214, 212, 232, 90))
-    img.alpha_composite(clouds.filter(ImageFilter.GaussianBlur(10)))
-    # far mountains
+    for _ in range(16):
+        x, y = rng.uniform(-60, w), rng.uniform(20, 150)
+        cd.ellipse([x, y, x + rng.uniform(120, 260), y + rng.uniform(10, 24)], fill=(190, 188, 210, 80))
+    img.alpha_composite(clouds.filter(ImageFilter.GaussianBlur(8)))
+
+    # distant hills
     d = ImageDraw.Draw(img)
-    ridge = [(x, 250 - 30 * math.sin(x / 80) - 16 * math.sin(x / 27 + 1)) for x in range(0, w + 8, 8)]
-    d.polygon([(0, 380)] + ridge + [(w, 380)], fill=(150, 146, 182, 255))
-    img.alpha_composite(fog_band(w, h, 220, 340, mist, 0.6))
+    ridge = [(x, 196 - 22 * math.sin(x / 60) - 10 * math.sin(x / 19 + 1)) for x in range(0, w + 6, 6)]
+    d.polygon([(0, 300)] + ridge + [(w, 300)], fill=(132, 132, 156, 255))
+    img.alpha_composite(fog_band(w, h, 170, 260, mist, 0.65))
 
-    # forest rows with lit sides, mist pooling at each foot; a clearing in the middle rows
-    rows = [(330, 60, (126, 134, 150), (150, 156, 170), 14, None),
-            (348, 100, (94, 112, 112), (120, 136, 132), 20, None),
-            (366, 150, (60, 86, 74), (88, 116, 96), 28, None),
-            (384, 210, (36, 60, 46), (62, 92, 66), 40, None)]
-    for i, (hz, ht, col, lit, dens, skip) in enumerate(rows):
-        img.alpha_composite(forest_row(w, h, hz, ht, col, lit, dens, skip))
-        img.alpha_composite(fog_band(w, h, hz - ht * 0.55, hz + 4, mist, 0.46 - i * 0.09))
-    img.alpha_composite(shafts(w, h))
+    # forest rows: silhouettes filled with clustered foliage texture, fog thickening behind
+    rows = [(246, 50, (112, 124, 128), 12), (262, 84, (82, 100, 92), 16),
+            (278, 124, (52, 76, 60), 22), (292, 170, (32, 52, 38), 32)]
+    for i, (hz, ht, col, dens) in enumerate(rows):
+        mask = Image.new('L', (w, h), 0)
+        md = ImageDraw.Draw(mask)
+        x = -10
+        while x < w + 10:
+            x += dens * rng.uniform(0.35, 1.0)
+            pine_mask(md, x, hz + rng.uniform(-3, 4), ht * rng.uniform(0.65, 1.3))
+        md.rectangle([0, hz, w, h], fill=255)
+        tex = Image.fromarray(texture(h, w, col, 0.55, 10 + i, grain=0.9 + i * 0.25)).convert('RGBA')
+        img.paste(tex, (0, 0), mask)
+        img.alpha_composite(fog_band(w, h, hz - ht * 0.6, hz + 3, mist, 0.5 - i * 0.1))
 
-    # the meadow on its plateau
-    top = 384
-    meadow = gradient(w, 540 - top, [(0, (112, 148, 96)), (0.2, (78, 116, 64)), (1, (40, 74, 40))])
-    noise = np.random.default_rng(5).normal(0, 6, meadow.shape[:2])[:, :, None]
-    blotch = np.asarray(Image.fromarray((np.random.default_rng(6).random((14, 30)) * 255).astype(np.uint8))
-                        .resize((w, 540 - top), Image.BICUBIC)).astype(np.float32)[:, :, None]
-    meadow = np.clip(meadow + noise + (blotch - 128) * 0.16, 0, 255).astype(np.uint8)
+    # light falling through
+    lay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lay)
+    for x0, wd in ((120, 50), (250, 30), (460, 70), (560, 36)):
+        ld.polygon([(x0, 0), (x0 + wd, 0), (x0 + wd * 2.2 - 90, 320), (x0 + wd - 120, 320)], fill=(230, 230, 246, 34))
+    img.alpha_composite(lay.filter(ImageFilter.GaussianBlur(10)))
+
+    # the meadow: a grass texture, lighter and finer far off, coarser and darker near
+    top, edge = 292, 404
+    far = texture(edge - top, w, (86, 120, 70), 0.5, 21, grain=0.7, levels=6).astype(np.float32)
+    shade = np.linspace(1.12, 0.62, edge - top)[:, None, None]
+    meadow = np.clip(far * shade, 0, 255).astype(np.uint8)
     img.paste(Image.fromarray(meadow).convert('RGBA'), (0, top))
     d = ImageDraw.Draw(img)
-    d.line([(0, top), (w, top)], fill=(146, 176, 118, 255), width=2)
+    d.line([(0, top), (w, top)], fill=(128, 156, 104, 255), width=1)
+    for _ in range(900):
+        x, y = rng.uniform(0, w), rng.uniform(top + 3, edge)
+        sh = (y - top) / (edge - top)
+        g = lerp((118, 150, 96), (30, 56, 30), sh)
+        d.line([(x, y), (x + rng.uniform(-1.5, 1.5), y - 1 - 6 * sh)], fill=g + (255,), width=1)
 
-    # the pond, holding the sky, with a lighter rim
-    d.ellipse([590, 420, 900, 470], fill=(170, 170, 204, 255), outline=(220, 222, 238, 255), width=2)
-    d.ellipse([630, 432, 860, 448], fill=(190, 190, 218, 255))
+    # the pond, holding the grey sky
+    pond = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(pond).ellipse([430, 318, 676, 352], fill=255)
+    water = Image.fromarray(texture(h, w, (150, 150, 178), 0.18, 33, grain=2.5, levels=4)).convert('RGBA')
+    img.paste(water, (0, 0), pond)
+    d.arc([430, 318, 676, 352], 180, 360, fill=(196, 198, 214, 255), width=1)
 
-    # grass, thicker towards the edge (not on the pond)
-    for _ in range(1500):
-        x, y = rng.uniform(0, w), rng.uniform(top + 4, 540)
-        if 580 < x < 910 and 414 < y < 476:
-            continue
-        sh = (y - top) / (540 - top)
-        g = lerp((124, 160, 104), (34, 64, 34), sh)
-        d.line([(x, y), (x + rng.uniform(-2, 2), y - 2 - 8 * sh)], fill=g + (255,), width=1)
-
-    # the cut-away edge of the plateau: a ragged grassy lip over dark layered earth
-    lip = [(x, 540 + 6 * math.sin(x / 31) + rng.uniform(-3, 3)) for x in range(0, w + 6, 6)]
-    d.polygon(lip + [(w, h), (0, h)], fill=(32, 24, 26, 255))
-    for k, col in enumerate([(46, 36, 34), (38, 30, 30), (28, 22, 24)]):
-        y0 = 560 + k * 26
-        d.polygon([(x, y0 + 5 * math.sin(x / 47 + k)) for x in range(0, w + 8, 8)] + [(w, h), (0, h)], fill=col + (255,))
-    for x, y in lip[::2]:
-        d.line([(x, y - 2), (x + rng.uniform(-2, 2), y + rng.uniform(4, 12))], fill=(58, 100, 50, 255), width=2)
-    d.line(lip, fill=(84, 126, 66, 255), width=3)
-    # roots and stones in the earth
-    for _ in range(40):
-        x, y = rng.uniform(0, w), rng.uniform(560, h)
-        d.ellipse([x, y, x + rng.uniform(3, 9), y + rng.uniform(2, 5)], fill=(62, 52, 50, 255))
-
-    # plants of the garden
-    plant(d, 150, 470, 'frond')
-    plant(d, 520, 500, 'bulb')
-    plant(d, 860, 520, 'frond')
-
-    # the crystal beacons, floating above the meadow
-    crystal(img, 240, 300, 16)
-    crystal(img, 770, 330, 12)
-
-    # the garden's odd life: pixies asleep in bubbles, feather-flyers, a violet prism
-    bubble(img, 420, 440, 22)
-    bubble(img, 470, 470, 15)
-    prism(img, 330, 508, 120, 22)
+    # the cut-away edge of the plateau: grass lip, then layered earth
+    lip = [(x, edge + 4 * math.sin(x / 23) + rng.uniform(-2, 2)) for x in range(0, w + 4, 4)]
+    earth = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(earth).polygon(lip + [(w, h), (0, h)], fill=255)
+    soil = texture(h, w, (40, 30, 30), 0.6, 44, grain=1.5, levels=5).astype(np.float32)
+    soil *= np.linspace(1.0, 0.55, h)[:, None, None]
+    img.paste(Image.fromarray(np.clip(soil, 0, 255).astype(np.uint8)).convert('RGBA'), (0, 0), earth)
     d = ImageDraw.Draw(img)
-    feather(d, 120, 120, 26, 70)
-    feather(d, 210, 92, 18, 55)
-    feather(d, 860, 170, 20, 110)
-    # a red targeting line from the near ground to a beacon
-    d.line([(150, 600), (240, 300)], fill=(230, 40, 40, 255), width=1)
+    for x, y in lip[::2]:
+        d.line([(x, y - 1), (x + rng.uniform(-1.5, 1.5), y + rng.uniform(3, 9))], fill=(48, 84, 42, 255), width=1)
+    d.line(lip, fill=(76, 112, 58, 255), width=2)
+
+    # the garden's odd life
+    plant(d, 110, 360, 'frond', 0.6)
+    plant(d, 640, 392, 'frond', 0.7)
+    plant(d, 386, 384, 'bulb', 0.55)
+    plant(d, 40, 330, 'frond', 0.4)
+    prism(img, 250, 376, 92, 17)
+    bubble(img, 318, 340, 16)
+    bubble(img, 356, 362, 11)
+    crystal(img, 176, 214, 12)
+    crystal(img, 578, 238, 9)
+    d = ImageDraw.Draw(img)
+    feather(d, 90, 86, 20, 70)
+    feather(d, 158, 66, 14, 55)
+    feather(d, 650, 124, 15, 110)
+    d.line([(112, 470), (176, 214)], fill=(220, 36, 36, 255), width=1)
 
     # the pixies' sparks
     glow = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    for c in [(95, 216, 240), (255, 63, 164), (232, 196, 110), (120, 220, 120), (191, 234, 247)] * 3:
-        x, y, r = rng.uniform(80, w - 80), rng.uniform(220, 470), rng.uniform(2, 3.5)
+    for c in [(95, 216, 240), (255, 63, 164), (232, 196, 110), (120, 220, 120)] * 3:
+        x, y, r = rng.uniform(60, w - 60), rng.uniform(160, 350), rng.uniform(1.5, 2.5)
         gd.ellipse([x - r * 3, y - r * 3, x + r * 3, y + r * 3], fill=c + (60,))
         gd.ellipse([x - r, y - r, x + r, y + r], fill=c + (255,))
-    img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(1)))
+    img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(0.8)))
 
-    # Pasha on a rock in the right third, rimmed in cyan light: the keeper
+    # Pasha as a sprite: small, a muted palette of a few colours, on his rock by the pond
     d = ImageDraw.Draw(img)
-    rock = [(560, 512), (585, 486), (640, 478), (690, 488), (708, 514), (690, 526), (590, 528)]
-    d.polygon(rock, fill=(96, 98, 112, 255))
-    d.polygon([(585, 486), (640, 478), (690, 488), (650, 494), (600, 496)], fill=(140, 142, 160, 255))
-    p = pasha.resize((170, 170), Image.LANCZOS)
-    rim = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-    alpha = p.split()[3].filter(ImageFilter.MaxFilter(7))
-    rim.paste(Image.new('RGBA', p.size, (120, 230, 255, 200)), (552, 348), alpha)
-    img.alpha_composite(rim.filter(ImageFilter.GaussianBlur(4)))
-    img.alpha_composite(p, (552, 348))
+    rock = [(410, 384), (428, 366), (466, 360), (500, 368), (512, 386), (498, 394), (424, 396)]
+    d.polygon(rock, fill=(84, 86, 98, 255))
+    d.polygon([(428, 366), (466, 360), (500, 368), (470, 372), (436, 374)], fill=(124, 126, 142, 255))
+    sprite = pasha.resize((92, 92), Image.LANCZOS)
+    rgb = sprite.convert('RGB').quantize(colors=10, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).convert('RGB')
+    rgb = Image.fromarray((np.asarray(rgb).astype(np.float32) * np.array([0.86, 0.88, 0.96])).astype(np.uint8))
+    a = sprite.split()[3].point(lambda v: 255 if v > 110 else 0)
+    sprite = rgb.convert('RGBA'); sprite.putalpha(a)
+    halo = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    halo.paste(Image.new('RGBA', sprite.size, (110, 220, 250, 150)), (412, 280), a.filter(ImageFilter.MaxFilter(5)))
+    img.alpha_composite(halo.filter(ImageFilter.GaussianBlur(3)))
+    img.alpha_composite(sprite, (412, 280))
 
-    # stat plates hovering by the beacons
-    d = ImageDraw.Draw(img)
-    stat_plate(d, 270, 250, (16, -26, 0, 63))
-    stat_plate(d, 790, 284, (48, 2, -6, 0))
-
-    # vignette
+    # vignette, then the console's colour depth and dithering
     yy, xx = np.mgrid[0:h, 0:w]
-    v = 1 - 0.45 * np.clip(((xx - w / 2) / (w * 0.62)) ** 2 + ((yy - h * 0.45) / (h * 0.7)) ** 2, 0, 1)
-    a = np.asarray(img.convert('RGB')).astype(np.float32) * v[:, :, None]
-    img = Image.fromarray(a.astype(np.uint8))
-
-    img = bayer_dither(img, levels=48).convert('RGBA')
-
-    # the HUD stays crisp, as the console drew it over the 3D scene
-    hud(img)
-    d = ImageDraw.Draw(img)
-    plate = lambda x, y, text: (
-        d.polygon([(x + 10, y), (x + 120, y), (x + 132, y + 11), (x + 120, y + 22), (x + 10, y + 22), (x - 2, y + 11)],
-                  fill=(191, 227, 214, 255), outline=(255, 255, 255, 255)),
-        d.text((x + 18, y + 2), text, font=font(JP, 14), fill=(12, 20, 38, 255)))
-    plate(560, 316, 'パーシャ')
-    plate(170, 225, 'アヴァロン')
-    return img.convert('RGB').resize((W, H), Image.NEAREST)
+    v = 1 - 0.42 * np.clip(((xx - w / 2) / (w * 0.62)) ** 2 + ((yy - h * 0.45) / (h * 0.7)) ** 2, 0, 1)
+    rgb = np.asarray(img.convert('RGB')).astype(np.float32) * v[:, :, None]
+    img = bayer_dither(Image.fromarray(rgb.astype(np.uint8)), levels=32)
+    return img.resize((W, H), Image.NEAREST)
 
 
 def portrait(pasha):

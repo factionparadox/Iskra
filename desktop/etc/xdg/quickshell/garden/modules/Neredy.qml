@@ -13,7 +13,7 @@ PanelWindow {
 
 	visible: open
 	anchors { top: true; right: true; bottom: true }
-	margins { top: Theme.barHeight + 18; right: 14; bottom: 14 }
+	margins { top: 84; right: 14; bottom: 14 }
 	implicitWidth: 420
 	exclusionMode: ExclusionMode.Ignore
 	color: "transparent"

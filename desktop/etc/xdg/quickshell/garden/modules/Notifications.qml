@@ -25,7 +25,7 @@ Scope {
 	PanelWindow {
 		visible: server.trackedNotifications.values.length > 0
 		anchors { top: true; right: true }
-		margins { top: Theme.barHeight + 18; right: 14 }
+		margins { top: 84; right: 14 }
 		implicitWidth: 380
 		implicitHeight: column.implicitHeight
 		exclusionMode: ExclusionMode.Ignore

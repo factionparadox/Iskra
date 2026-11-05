@@ -9,7 +9,7 @@ import qs.modules
 // Each panel answers  garden <name>  (Quickshell IPC): launcher, lock, power, keyhelp, neredy.
 ShellRoot {
 	Wallpaper {}
-	Bar {}
+	Hud {}
 	Notifications {}
 
 	Launcher { id: launcher }
