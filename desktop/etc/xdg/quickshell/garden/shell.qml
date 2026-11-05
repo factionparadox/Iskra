@@ -6,7 +6,7 @@ import qs.services
 import qs.modules
 
 // The Garden System: Avalon's desktop shell, run by garden-session as  quickshell -c garden.
-// Each panel answers  garden <name>  (Quickshell IPC): launcher, lock, power, keyhelp, neredy.
+// Each panel answers  garden <name>  (Quickshell IPC): launcher, starsystem, lock, power, keyhelp, neredy.
 ShellRoot {
 	Wallpaper {}
 	Hud {}
@@ -15,6 +15,7 @@ ShellRoot {
 	Launcher { id: launcher }
 	PowerMenu { id: power; onLockRequested: lock.lock() }
 	KeyHelp { id: keyhelp }
+	StarSystem { id: starsystem }
 	Neredy { id: neredy }
 	Lock { id: lock }
 
@@ -22,5 +23,6 @@ ShellRoot {
 	IpcHandler { target: "power";    function toggle(): void { power.toggle() } }
 	IpcHandler { target: "keyhelp";  function toggle(): void { keyhelp.toggle() } }
 	IpcHandler { target: "neredy";   function toggle(): void { neredy.toggle() } }
+	IpcHandler { target: "starsystem"; function toggle(): void { starsystem.toggle() } }
 	IpcHandler { target: "lock";     function toggle(): void { lock.lock() } }
 }

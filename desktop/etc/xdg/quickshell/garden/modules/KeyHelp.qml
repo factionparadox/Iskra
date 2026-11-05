@@ -25,7 +25,8 @@ PanelWindow {
 		{ title: "Workstations", keys: [
 			["Super + 1 … 9", "Go to workstation 1 … 9"],
 			["Super + Shift + 1 … 9", "Send the window to workstation 1 … 9"],
-			["Super + Tab", "Overview of workstations and windows"],
+			["Super + Tab", "The star system: visit a workstation"],
+			["Super + Shift + Tab", "Overview of every window"],
 			["Super + scroll", "Previous / next workstation"] ] },
 		{ title: "Applications", keys: [
 			["Super + Space", "Launcher"],
