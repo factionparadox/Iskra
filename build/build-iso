@@ -100,7 +100,8 @@ run sh -c "yes y | sparkpkg sync" > "$WORK/sync.log" 2>&1 || { tail -30 "$WORK/s
 grep -E "trusted|Error" "$WORK/sync.log" || true
 
 say "Iskra, and everything it needs that Slackware's series don't have"
-want=$(run /usr/lib/sparkpkg/assimilate expand iskra)
+# expand leaves out what's installed here already, so the package tools installed above are named
+want="slpkg fakeroot sparkpkg $(run /usr/lib/sparkpkg/assimilate expand iskra)"
 echo "$want" | tr '\n' ' ' | fold -s -w 96 | sed 's/^/    /'; echo
 LS=$ROOT/tmp/liveslak
 rm -rf "$LS/local64/iskra"; mkdir -p "$LS/local64"
