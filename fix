@@ -1,0 +1,28 @@
+#!/bin/sh
+# Puts slpkg, fakeroot and sparkpkg on an Iskra installed from the first stick (which left them
+# out), each checked against Iskra's signing key, then syncs. Run:
+#   curl -sL raw.githubusercontent.com/factionparadox/Iskra/main/fix | sudo sh
+set -e
+R=https://github.com/factionparadox/Iskra/releases/download/packages
+FPR=8236C5FB591B6DD22CED003CB35FDE0140A584F1
+T=$(mktemp -d); G=$T/gnupg; mkdir -m 700 "$G"; cd "$T"
+echo "==> Iskra's key"
+curl -fsSL -o GPG-KEY "$R/GPG-KEY"
+gpg --homedir "$G" --batch --quiet --import GPG-KEY 2>/dev/null
+gpg --homedir "$G" --batch --with-colons --fingerprint | grep -q "^fpr:::::::::$FPR:" ||
+  { echo "fix: that isn't Iskra's key ($FPR); nothing installed"; exit 1; }
+echo "    $FPR"
+for p in slpkg-6.1.7-x86_64-1_iskra fakeroot-1.37.1.1-x86_64-1_iskra sparkpkg-0.1-noarch-1_iskra; do
+  echo "==> $p"
+  curl -fsSL -o "$p.txz" "$R/$p.txz"
+  curl -fsSL -o "$p.txz.asc" "$R/$p.txz.asc"
+  gpg --homedir "$G" --batch --status-fd 1 --verify "$p.txz.asc" "$p.txz" 2>/dev/null | grep -q "VALIDSIG $FPR" ||
+    { echo "fix: $p isn't signed by Iskra's key; nothing more installed"; exit 1; }
+  echo "    signed by Iskra's key"
+  /sbin/upgradepkg --install-new --reinstall "$p.txz"
+done
+cd /; rm -rf "$T"
+echo "==> sparkpkg sync"
+yes y | sparkpkg sync
+echo
+echo "Done. sparkpkg works now: sudo sparkpkg upgrade"
