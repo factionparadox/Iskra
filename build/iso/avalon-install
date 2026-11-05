@@ -1,0 +1,119 @@
+#!/bin/bash
+# avalon-install: put Avalon on the laptop's disk from this disc. Runs in the CRUX live system.
+#
+# Before it: make your partitions and mount them under /mnt, the EFI partition included, e.g.
+#     mkfs.fat -F32 /dev/nvme0n1p1   mkfs.ext4 /dev/nvme0n1p2
+#     mount /dev/nvme0n1p2 /mnt      mkdir -p /mnt/boot/efi   mount /dev/nvme0n1p1 /mnt/boot/efi
+# Then:
+#     /media/avalon-install YOURNAME
+#
+# Nothing is downloaded or compiled: every package is on the disc. It installs CRUX's core, then
+# Avalon and everything it needs, writes /etc/fstab, sets you up, and installs GRUB.
+set -e
+USER_NAME=${1:-}
+ROOT=/mnt
+MEDIA=$(cd "$(dirname "$0")" && pwd)
+LIST=$MEDIA/avalon/packages.list
+
+say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+die()  { printf '\n\033[1;35mavalon-install: %s\033[0m\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "run it as root"
+[ -n "$USER_NAME" ] || die "say whose laptop it is: $0 YOURNAME"
+[ -f "$LIST" ] || die "this isn't an Avalon disc (no $LIST)"
+grep -q " $ROOT " /proc/mounts || die "nothing is mounted on $ROOT: mount your root partition there first"
+ESP=$(awk -v r="$ROOT" '$2 ~ "^"r"/" && $3 == "vfat" {print $2; exit}' /proc/mounts)
+[ -n "$ESP" ] || die "the EFI partition isn't mounted under $ROOT (e.g. $ROOT/boot/efi)"
+
+installed() { pkginfo -r $ROOT -i 2>/dev/null | awk -v n="$1" '$1 == n {print $2}'; }
+add() {  # add NAME#VERSION-RELEASE from wherever it is on the disc
+	local entry=$1 name=${1%%#*} want=${1#*#} f have
+	f=$(find "$MEDIA/avalon/packages" "$MEDIA/crux/core" "$MEDIA/crux/opt" "$MEDIA/crux/xorg" \
+		-name "$entry.pkg.tar.*" 2>/dev/null | head -1)
+	[ -n "$f" ] || die "$entry isn't on the disc"
+	have=$(installed "$name")
+	if [ "$have" = "$want" ]; then return 0
+	elif [ -n "$have" ]; then echo "    $name $have -> $want"; pkgadd -r $ROOT -u "$f"
+	else echo "    $name $want"; pkgadd -r $ROOT "$f"; fi
+}
+
+say "CRUX's core"
+mkdir -p $ROOT/var/lib/pkg && touch $ROOT/var/lib/pkg/db
+for f in "$MEDIA"/crux/core/*.pkg.tar.*; do
+	e=$(basename "$f"); e=${e%.pkg.tar.*}
+	add "$e"
+done
+
+say "Avalon and everything it needs ($(wc -l < "$LIST") packages)"
+while read -r e; do [ -n "$e" ] && add "$e"; done < "$LIST"
+
+say "Ports trees (CRUX's and Avalon's) for building and updating later"
+mkdir -p $ROOT/usr/ports
+cp -a "$MEDIA"/avalon/ports/. $ROOT/usr/ports/
+
+if [ -d "$MEDIA/avalon/voices" ]; then
+	mkdir -p $ROOT/usr/share/avalon/voices
+	cp "$MEDIA"/avalon/voices/* $ROOT/usr/share/avalon/voices/
+fi
+if [ -f "$MEDIA/avalon/neredy-model.gguf" ]; then
+	say "Neredy's model ($(du -h "$MEDIA/avalon/neredy-model.gguf" | cut -f1))"
+	cp "$MEDIA/avalon/neredy-model.gguf" $ROOT/var/tmp/
+fi
+
+say "/etc/fstab"
+if ! grep -qE '^[^#]+[[:space:]]/[[:space:]]' $ROOT/etc/fstab; then
+	{
+		echo "# Avalon: written by avalon-install"
+		awk -v r="$ROOT" '$2 == r || $2 ~ "^"r"/" {print $1, $2, $3}' /proc/mounts |
+		while read -r dev mnt fs; do
+			case $dev in /dev/*) ;; *) continue ;; esac
+			uuid=$(blkid -s UUID -o value "$dev")
+			where=${mnt#$ROOT}; where=${where:-/}
+			[ "$where" = / ] && pass=1 || pass=2
+			[ "$fs" = vfat ] && opts=defaults,umask=0077 || opts=defaults,noatime
+			echo "UUID=$uuid  $where  $fs  $opts  0 $pass"
+		done
+		awk 'NR > 1 && $2 == "partition" {print $1}' /proc/swaps | while read -r dev; do
+			echo "UUID=$(blkid -s UUID -o value "$dev")  swap  swap  defaults  0 0"
+		done
+	} >> $ROOT/etc/fstab
+fi
+grep -v '^#' $ROOT/etc/fstab | grep -v '^$'
+
+say "Into the new system"
+for d in dev dev/pts proc sys run tmp; do mkdir -p $ROOT/$d; done
+mount --bind /dev $ROOT/dev
+mount -t devpts -o noexec,nosuid,gid=tty,mode=0620 devpts $ROOT/dev/pts
+mount -t proc proc $ROOT/proc
+mount -t sysfs sysfs $ROOT/sys
+mount --bind /run $ROOT/run
+mount --bind /tmp $ROOT/tmp
+grep -qs /sys/firmware/efi/efivars /proc/mounts && mount --bind /sys/firmware/efi/efivars $ROOT/sys/firmware/efi/efivars
+cleanup() { for d in sys/firmware/efi/efivars tmp run sys proc dev/pts dev; do umount $ROOT/$d 2>/dev/null || true; done; }
+trap cleanup EXIT
+inroot() { chroot $ROOT /usr/bin/env -i HOME=/root TERM="$TERM" PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
+
+say "Install scripts (system users and groups for D-Bus, greetd, seatd...)"
+while read -r e; do
+	n=${e%%#*}
+	for s in pre-install post-install; do
+		f=$(ls -d $ROOT/usr/ports/*/"$n"/$s 2>/dev/null | head -1)
+		[ -n "$f" ] || continue
+		echo "    $n: $s"
+		inroot sh "${f#$ROOT}" || echo "    ($n's $s complained; carrying on)"
+	done
+done < "$LIST"
+
+say "Avalon's own settings, and you"
+inroot sh /usr/ports/avalon/avalon-setup --iso "$USER_NAME"
+
+say "root's password"
+inroot passwd root
+
+say "GRUB (UEFI), on ${ESP#$ROOT}"
+inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --bootloader-id=Avalon
+inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --removable
+sed -i 's|^#\?GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR="Avalon"|' $ROOT/etc/default/grub 2>/dev/null || true
+inroot grub-mkconfig -o /boot/grub/grub.cfg
+
+say "Avalon is installed. Take the stick out and type: reboot"

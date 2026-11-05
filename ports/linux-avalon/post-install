@@ -1,0 +1,2 @@
+#!/bin/sh
+for k in /lib/modules/*-avalon; do depmod -a "${k##*/}"; done

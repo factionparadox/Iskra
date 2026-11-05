@@ -36,17 +36,41 @@ No Flatpak: everything is a native package.
 
 ## Installing
 
-1. Install CRUX 3.8 from its ISO as usual (CRUX's `setup`, then your kernel and GRUB), reboot,
-   get online.
-2. As root:
+### The disc
 
-       git clone https://github.com/factionparadox/Iskra /usr/ports/avalon
-       /usr/ports/avalon/avalon-setup YOURNAME
+Build it on your own machine (Arch, or Arch on WSL), as root, from this repo:
 
-   It enables CRUX's contrib ports, adds Avalon's, makes your own signing key and signs Avalon's
-   ports with it, builds Avalon with prt-get (you can watch every build), and sets up the
-   services, your groups and the login screen.
-3. Reboot into the Garden System.
+    sudo build/make-iso
+
+It downloads the official CRUX 3.8 ISO (checking its checksum), makes a CRUX build system from
+its packages in `/var/tmp/avalon-iso`, brings CRUX's ports up to date there and compiles what
+Avalon needs that the ISO lacks: Avalon's own kernel (Linux 7.3, for the Panther Lake graphics;
+CRUX 3.8's ISO has 6.12), Mango, Quickshell, greetd, PipeWire and the rest. Every build is shown.
+If one fails, run the same command again and it carries on. The result is
+`avalon-1-iskra.iso`, with Neredy's Russian voice on it (`NEREDY_MODEL=small` adds her model too).
+
+### On the laptop
+
+1. Write the ISO to a USB stick, boot it, log in as root.
+2. Partition and mount (the EFI partition too), for example:
+
+       mkfs.fat -F32 /dev/nvme0n1p1 && mkfs.ext4 /dev/nvme0n1p2
+       mount /dev/nvme0n1p2 /mnt && mkdir -p /mnt/boot/efi && mount /dev/nvme0n1p1 /mnt/boot/efi
+
+3. Install:
+
+       /media/avalon-install YOURNAME
+
+   Nothing is downloaded or compiled: it installs CRUX's core and every Avalon package from the
+   disc, writes `/etc/fstab`, creates your user, asks for your and root's passwords, and installs
+   GRUB. Then `reboot` into the Garden System.
+
+### On an existing CRUX install instead
+
+    git clone https://github.com/factionparadox/Iskra /usr/ports/avalon
+    /usr/ports/avalon/avalon-setup YOURNAME
+
+This builds everything on the laptop itself with prt-get.
 
 ## Status
 

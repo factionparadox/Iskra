@@ -10,6 +10,9 @@
 # with prt-get: everything not on the CRUX ISO is compiled here, and you can watch it. Services,
 # your user's groups and the login screen are set at the end. Safe to run again.
 set -e
+# --iso: called by the Avalon disc's installer, which has already put every package in place,
+# so nothing is downloaded or built here
+FROM_ISO=; [ "${1:-}" = --iso ] && { FROM_ISO=1; shift; }
 USER_NAME=${1:-}
 AVALON=/usr/ports/avalon
 
@@ -23,7 +26,7 @@ die()  { printf '\n\033[1;35mavalon-setup: %s\033[0m\n' "$*" >&2; exit 1; }
 
 say "CRUX's contrib ports (Wayland, greetd, PipeWire, NetworkManager... live there)"
 [ -f /etc/ports/contrib.rsync.inactive ] && mv /etc/ports/contrib.rsync.inactive /etc/ports/contrib.rsync
-ports -u
+[ -n "$FROM_ISO" ] && echo "    (the disc brought a copy of the ports trees; 'metamelayer sync' refreshes them)" || ports -u
 
 say "prt-get: contrib and Avalon's ports, and running ports' install scripts"
 conf=/etc/prt-get.conf
@@ -40,6 +43,9 @@ grep -q '^export MAKEFLAGS' /etc/pkgmk.conf || echo "export MAKEFLAGS=\"-j$(npro
 say "Metamelayer, and your own key for Avalon's ports"
 install -m 755 "$AVALON/desktop/usr/bin/metamelayer" /usr/bin/metamelayer
 metamelayer key
+if [ -n "$FROM_ISO" ]; then
+	echo "    Avalon's ports get signed with it the first time you run: sudo metamelayer sync"
+else
 metamelayer sign
 
 say "Building Avalon (this is the long part: Mango, Quickshell, greetd and what they need)"
@@ -54,6 +60,14 @@ else
 	ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1 && echo "    present now" ||
 		echo "    still missing: Neredy will run on the processor (slower); 'neredy check' says more"
 fi
+fi
+
+say "Name, clock, keyboard and languages"
+sed -i -e 's|^HOSTNAME=.*|HOSTNAME=avalon|' -e 's|^TIMEZONE=.*|TIMEZONE=Europe/London|' \
+	-e 's|^KEYMAP=.*|KEYMAP=uk|' /etc/rc.conf
+grep -q '^HOSTNAME=' /etc/rc.conf || echo 'HOSTNAME=avalon' >> /etc/rc.conf
+for l in en_GB ru_RU; do localedef -i $l -f UTF-8 $l.UTF-8 2>/dev/null || true; done
+echo 'export LANG=en_GB.UTF-8' > /etc/profile.d/avalon-locale.sh
 
 say "Services: D-Bus, seatd, NetworkManager, Bluetooth and the login screen"
 for s in dbus seatd networkmanager bluetoothd greetd; do
@@ -71,11 +85,29 @@ done
 getent passwd greeter >/dev/null && usermod -aG video,input,seat greeter
 
 say "Neredy's voice (Irina, about 60 MB) for reading Russian aloud"
-su - "$USER_NAME" -c 'neredy voice irina' || echo "    skipped: run 'neredy voice' later"
+if [ -f /usr/share/avalon/voices/ru_RU-irina-medium.onnx ]; then
+	v=$(getent passwd "$USER_NAME" | cut -d: -f6)/.local/share/neredy/voices
+	install -d "$v"
+	cp /usr/share/avalon/voices/ru_RU-irina-medium.onnx* "$v/"
+	ln -sf ru_RU-irina-medium.onnx "$v/current.onnx"
+	ln -sf ru_RU-irina-medium.onnx.json "$v/current.onnx.json"
+	chown -R "$USER_NAME:" "$(dirname "$(dirname "$v")")"
+	echo "    from the disc"
+else
+	su - "$USER_NAME" -c 'neredy voice irina' || echo "    skipped: run 'neredy voice' later"
+fi
+
+if [ -f /var/tmp/neredy-model.gguf ]; then
+	say "Neredy's model, from the disc"
+	m=$(getent passwd "$USER_NAME" | cut -d: -f6)/.local/share/neredy/models
+	install -d "$m" && mv /var/tmp/neredy-model.gguf "$m/" && ln -sf neredy-model.gguf "$m/current.gguf"
+	chown -R "$USER_NAME:" "$m"
+fi
 
 say "Avalon's name"
 install -m 644 /usr/share/avalon/os-release /etc/os-release
 
 say "Done. Reboot: the Garden System's login screen will greet you."
-echo "   Neredy needs a model once:  neredy setup small   (or: large, for the best Russian tutor)"
+[ -f "$(getent passwd "$USER_NAME" | cut -d: -f6)/.local/share/neredy/models/current.gguf" ] ||
+	echo "   Neredy needs a model once:  neredy setup small   (or: large, for the best Russian tutor)"
 echo "   Later: 'sudo metamelayer upgrade' to update, 'avalon' for Avalon's own commands."
