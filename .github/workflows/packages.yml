@@ -90,7 +90,7 @@ jobs:
         run: |
           # packages an earlier, unfinished run built: used when unchanged (build-packages checks)
           if [ -d out-cache ]; then
-            for f in out-cache/*.txz; do [ -e "out/$(basename "$f")" ] || cp "$f" out/; done
+            for f in out-cache/*.txz; do [ -e "$f" ] || continue; [ -e "out/$(basename "$f")" ] || cp "$f" out/; done
             [ -f out/built.json ] || cp out-cache/built.json out/ 2>/dev/null || true
             python3 - <<'PY'
           import json, pathlib
