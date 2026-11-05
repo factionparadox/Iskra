@@ -124,6 +124,18 @@ sed -i -e 's|^  set gfxmode=.*|  set gfxmode=auto\n  loadfont $cmdpath/liveslak/
        "$LS/grub.tpl"
 grep -q 'menu.pf2' "$LS/grub.tpl" && grep -q 'Start Iskra' "$LS/grub.tpl" || die "liveslak's boot menu has changed; build/build-iso needs updating"
 
+say "Slackware's own documents, which liveslak puts on the stick (checked against Slackware's signed list)"
+awk '$2 ~ /^\.\/(ANNOUNCE|CHANGES_AND_HINTS|COPY|CRYPTO|README|RELEASE_NOTES|SPEAK|[^\/]*HOWTO|UPGRADE)[^\/]*$/ ||
+     $2 ~ /^\.\/usb-and-pxe-installers\/README[^\/]*$/ { sub("^\\./", "", $2); print $1, $2 }' "$CACHE/CHECKSUMS.md5" |
+while read -r sum f; do
+  mkdir -p "$CACHE/$(dirname "$f")"
+  if ! { [[ -f $CACHE/$f ]] && echo "$sum  $CACHE/$f" | md5sum -c --status; }; then
+    curl -fsSL --retry 3 -o "$CACHE/$f" "$MIRROR/$f"
+    echo "$sum  $CACHE/$f" | md5sum -c --status || die "$f does not match Slackware's signed checksum"
+  fi
+  echo "    $f"
+done
+
 say "The stick (liveslak's make_slackware_live.sh, in the Slackware system)"
 mkdir -p "$ROOT/tmp/slackrepo/slackware64-current"
 mountpoint -q "$ROOT/tmp/slackrepo/slackware64-current" || mount --bind "$CACHE" "$ROOT/tmp/slackrepo/slackware64-current"
