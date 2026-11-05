@@ -34,6 +34,7 @@ font-go                 iskra:font-go
 font-ipaex              iskra:font-ipaex
 zig                     iskra:zig          # ly is built with it; its own build (from source: hours)
 ly                      iskra:ly           # Arch's way, from git at Arch's commits
+oxwm                    iskra:oxwm         # the window manager; zig 0.16, seconds
 networkmanager-dmenu    arch:networkmanager-dmenu
 # later (doesn't build yet): udiskie                 arch:udiskie
 pulsemixer              ponce:audio/pulsemixer

@@ -1,0 +1,25 @@
+#!/bin/bash
+# oxwm.SlackBuild: Iskra's SlackBuild for OXWM, the window manager (dwm-like, configured in Lua).
+# Built with zig 0.16, from the v0.13.0 commit; its one dependency, Lua, is lua.org's tarball,
+# checked by its sha256 here and by its content hash (build.zig.zon) by zig. Run in this folder, as root.
+PRGNAM=oxwm
+. ../lib.sh
+B=$TMP/oxwm-build
+rm -rf $B; mkdir -p $B/zig-cache; cd $B
+export HOME=$B ZIG_GLOBAL_CACHE_DIR=$B/zig-cache ZIG_LOCAL_CACHE_DIR=$B/zig-local
+tar xf $CWD/oxwm-fc4ada9ac4ee8e34ace203290a2b14d10e4671cc.tar.gz
+cd oxwm-fc4ada9ac4ee8e34ace203290a2b14d10e4671cc
+zig fetch $CWD/lua-5.4.8.tar.gz
+# zig looks for libraries in <prefix>/lib; Slackware keeps them in /usr/lib64
+mkdir -p $B/prefix; ln -sfn /usr/lib64 $B/prefix/lib; ln -sfn /usr/include $B/prefix/include
+GLIBC=$(ldd --version | sed -n "1s/.* //p")
+zig build --search-prefix $B/prefix --cache-dir $B/zig-local --prefix $PKG/usr \
+  -Dtarget=x86_64-linux-gnu.$GLIBC -Dcpu=baseline -Doptimize=ReleaseSafe
+# the session it appears as in ly, its manual, its default settings (Iskra's own come with iskra-desktop)
+install -Dm644 resources/oxwm.desktop $PKG/usr/share/xsessions/oxwm.desktop
+install -Dm644 resources/oxwm.1 $PKG/usr/man/man1/oxwm.1
+install -d $PKG/usr/share/oxwm; cp -a templates/. $PKG/usr/share/oxwm/
+install -Dm644 LICENSE $PKG/usr/doc/$PRGNAM-$VERSION/LICENSE
+install -m644 readme.org $PKG/usr/doc/$PRGNAM-$VERSION/
+chown -R root:root $PKG
+finish

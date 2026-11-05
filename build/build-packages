@@ -17,7 +17,7 @@ Each kind of entry in packages/LIST:
                of it) or else is built first from Ponce's SlackBuild too.
   arch:NAME / aur:NAME   sparkpkg arch|aur -y NAME, inside ROOT.
 """
-import hashlib, json, os, re, shutil, subprocess, sys, urllib.request
+import hashlib, json, os, re, shutil, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
@@ -117,8 +117,17 @@ class Builder:
             if not f.is_file():
                 print(f'    downloading {f.name}', flush=True)
                 req = urllib.request.Request(u, headers={'User-Agent': 'Iskra package builder'})
-                with urllib.request.urlopen(req, timeout=120) as r, open(f.with_suffix(f.suffix + '.part'), 'wb') as o:
-                    shutil.copyfileobj(r, o)
+                for attempt in range(1, 5):       # a dropped connection is tried again, not fatal
+                    try:
+                        with urllib.request.urlopen(req, timeout=120) as r, \
+                                open(f.with_suffix(f.suffix + '.part'), 'wb') as o:
+                            shutil.copyfileobj(r, o)
+                        break
+                    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+                        if attempt == 4 or (isinstance(e, urllib.error.HTTPError) and e.code < 500):
+                            raise
+                        print(f'    {e}; trying again ({attempt + 1} of 4)', flush=True)
+                        time.sleep(5 * attempt)
                 f.with_suffix(f.suffix + '.part').rename(f)
             data = f.read_bytes()
             if i < len(sha) and sha[i] != 'SKIP':
