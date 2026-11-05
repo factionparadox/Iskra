@@ -1,0 +1,76 @@
+#!/bin/sh
+# neredy: Avalon's local assistant, on llama.cpp. Everything stays on this laptop.
+#
+#   neredy setup [small|large]   download a model (once): small = Qwen3 4B (~2.5 GB, quick on
+#                                battery); large = Qwen3.6 35B-A3B (~22 GB, the best Russian tutor)
+#   neredy start                 start the model server (the panel does this itself)
+#   neredy stop                  stop it now
+#   neredy status                no-model / stopped / starting / ready
+#   neredy ask "question"        ask from the terminal
+#
+# The server listens on 127.0.0.1:11434 only, and stops itself after 15 idle minutes,
+# so it isn't holding memory or battery when you're not talking to it.
+set -e
+DATA=${XDG_DATA_HOME:-$HOME/.local/share}/neredy
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/neredy
+MODEL=$DATA/models/current.gguf
+PORT=${NEREDY_PORT:-11434}
+URL=http://127.0.0.1:$PORT
+IDLE=${NEREDY_IDLE:-900}
+HF=https://huggingface.co
+mkdir -p "$DATA/models" "$STATE"
+
+running() { [ -f "$STATE/server.pid" ] && kill -0 "$(cat "$STATE/server.pid")" 2>/dev/null; }
+ready()   { curl -fs "$URL/health" 2>/dev/null | grep -q '"ok"'; }
+
+setup() {
+	case ${1:-small} in
+		small) repo=unsloth/Qwen3-4B-Instruct-2507-GGUF; file=Qwen3-4B-Instruct-2507-Q4_K_M.gguf ;;
+		large) repo=unsloth/Qwen3.6-35B-A3B-GGUF;        file=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf ;;
+		*) echo "neredy setup small|large" >&2; exit 2 ;;
+	esac
+	echo "==> $file, from $HF/$repo (resumes if interrupted)"
+	curl -fL -C - --retry 5 -o "$DATA/models/$file.part" "$HF/$repo/resolve/main/$file"
+	mv "$DATA/models/$file.part" "$DATA/models/$file"
+	ln -sfn "$file" "$MODEL"
+	echo "==> Neredy will use $file. Super+N to talk."
+}
+
+start() {
+	[ -e "$MODEL" ] || { echo "no-model"; exit 3; }
+	running && return 0
+	date +%s > "$STATE/last-used"
+	setsid -f sh -c "
+		llama-server --model '$MODEL' --host 127.0.0.1 --port $PORT --jinja \
+			--ctx-size 8192 --n-gpu-layers 99 > '$STATE/server.log' 2>&1 &
+		echo \$! > '$STATE/server.pid'
+		# stop after $IDLE idle seconds
+		while kill -0 \$(cat '$STATE/server.pid') 2>/dev/null; do
+			sleep 60
+			last=\$(cat '$STATE/last-used' 2>/dev/null || echo 0)
+			[ \$(( \$(date +%s) - last )) -gt $IDLE ] && kill \$(cat '$STATE/server.pid') 2>/dev/null
+		done
+	" >/dev/null 2>&1
+}
+
+case ${1:-} in
+	setup)  shift; setup "$@" ;;
+	start)  start ;;
+	stop)   running && kill "$(cat "$STATE/server.pid")"; rm -f "$STATE/server.pid" ;;
+	touch)  date +%s > "$STATE/last-used" ;;
+	status)
+		if [ ! -e "$MODEL" ]; then echo no-model
+		elif ready; then echo ready
+		elif running; then echo starting
+		else echo stopped; fi ;;
+	ask)
+		shift
+		start
+		until ready; do sleep 1; done
+		date +%s > "$STATE/last-used"
+		q=$(printf '%s' "$*" | sed 's/\\/\\\\/g; s/"/\\"/g')
+		curl -fs "$URL/v1/chat/completions" -H 'Content-Type: application/json' \
+			-d "{\"messages\":[{\"role\":\"system\",\"content\":\"You are Neredy, the assistant of Avalon, a Linux system. Answer briefly, in British English.\"},{\"role\":\"user\",\"content\":\"$q\"}],\"chat_template_kwargs\":{\"enable_thinking\":false}}" |
+			sed -n 's/.*"content":"\(.*\)"}.*/\1/p' | sed 's/\\n/\n/g; s/\\"/"/g' ;;
+	*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

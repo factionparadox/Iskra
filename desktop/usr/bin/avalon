@@ -2,12 +2,12 @@
 # avalon: Avalon's own commands.
 #   avalon power suspend|reboot|off     the session's power actions
 #   avalon update                       sync the ports and upgrade (Metamelayer)
-#   avalon neredy setup                 (to come) download a model for Neredy
+#   avalon neredy setup [small|large]   download a model for Neredy (see: neredy)
 #   avalon version
 case $1 in
   power)   shift; exec sudo -n /usr/sbin/avalon-power "$@" ;;
   update)  exec sudo metamelayer upgrade ;;
-  neredy)  echo "Neredy's setup comes in the next part of Avalon." ; exit 1 ;;
+  neredy)  shift; exec neredy "$@" ;;
   version) cat /usr/share/avalon/release 2>/dev/null || echo "Avalon" ;;
   *)       sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
