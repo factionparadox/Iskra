@@ -92,7 +92,7 @@ start() {
 	date +%s > "$STATE/last-used"
 	setsid -f sh -c "
 		llama-server --model '$MODEL' --host 127.0.0.1 --port $PORT --jinja \
-			--ctx-size 8192 --n-gpu-layers 99 > '$STATE/server.log' 2>&1 &
+			--ctx-size 8192 --n-gpu-layers 99 --threads ${NEREDY_THREADS:-4} > '$STATE/server.log' 2>&1 &
 		echo \$! > '$STATE/server.pid'
 		# stop after $IDLE idle seconds
 		while kill -0 \$(cat '$STATE/server.pid') 2>/dev/null; do
