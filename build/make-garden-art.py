@@ -459,7 +459,7 @@ def portrait(pasha):
 if __name__ == '__main__':
     OUT.mkdir(parents=True, exist_ok=True)
     pasha = Image.open(PASHA).convert('RGBA')
-    wallpaper(pasha).save(OUT / 'garden-wallpaper.png', optimize=True)
+    # the wallpaper itself is rendered in 3D by build/render-garden.py
     portrait(pasha).save(OUT / 'pasha-portrait.png', optimize=True)
     pasha.resize((512, 512), Image.LANCZOS).save(OUT / 'pasha-fastfetch.png', optimize=True)
     print('written to', OUT)

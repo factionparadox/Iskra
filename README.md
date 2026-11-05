@@ -31,7 +31,7 @@ No Flatpak: everything is a native package.
 | `desktop/` | The Garden System's settings and tools, as they're installed (`etc/`, `usr/`) |
 | `desktop/etc/xdg/quickshell/garden/` | The Garden System shell: bar, launcher, notifications, lock, power menu, key reference, Neredy |
 | `desktop/usr/share/garden/greeter.qml` | The login screen (greetd) |
-| `branding/` | Pasha and the artwork; `build/make-garden-art.py` draws the wallpaper |
+| `branding/` | Pasha and the artwork; `build/render-garden.py` renders the wallpaper as a small PlayStation-style 3D scene |
 | `russian/` | The Russian learning kit, to become Neredy's tutor |
 
 ## Installing
