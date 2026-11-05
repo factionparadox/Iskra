@@ -1,0 +1,9 @@
+#!/bin/sh
+# /usr/sbin/avalon-power: suspend, restart or power off (as root; the Garden System runs it
+# through sudo, which /etc/sudoers.d/avalon allows for the wheel group without a password).
+case $1 in
+  suspend) sync; echo mem > /sys/power/state ;;
+  reboot)  exec /sbin/shutdown -r now ;;
+  off)     exec /sbin/shutdown -h now ;;
+  *)       echo "usage: avalon-power suspend|reboot|off" >&2; exit 2 ;;
+esac

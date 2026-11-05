@@ -1,0 +1,2 @@
+# Avalon: the Garden System can suspend, restart and power off for anyone in wheel
+%wheel ALL=(root) NOPASSWD: /usr/sbin/avalon-power

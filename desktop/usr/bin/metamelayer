@@ -1,0 +1,70 @@
+#!/bin/sh
+# metamelayer: Avalon's package manager, over CRUX's own tools (prt-get, pkgmk, pkgutils).
+#
+#   metamelayer sync               update the ports: CRUX's collections and Avalon's
+#   metamelayer install NAME...    build and install, with what they depend on
+#   metamelayer remove NAME...     remove
+#   metamelayer upgrade            sync, then rebuild whatever is out of date
+#   metamelayer search WORD        find ports by name
+#   metamelayer info NAME          what a port is and what it needs
+#   metamelayer list               what's installed
+#   metamelayer diff               installed packages with newer ports
+#   metamelayer key                make your own signing key for Avalon's ports (once)
+#   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
+#
+# Avalon's ports are signed by you: the key lives in /etc/ports/avalon.{pub,sec} on this
+# machine and nowhere else, and pkgmk refuses a port whose files don't match its signature.
+set -e
+AVALON=${AVALON_SRC:-/usr/ports/avalon}
+PORTS=$AVALON/ports
+KEY=/etc/ports/avalon
+
+say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[1;35mmetamelayer:\033[0m %s\n' "$*" >&2; exit 1; }
+root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo metamelayer $*"; }
+
+sync_ports() {
+	say "CRUX's ports"
+	ports -u
+	if [ -d "$AVALON/.git" ]; then
+		say "Avalon's ports ($AVALON)"
+		git -C "$AVALON" pull --ff-only
+		[ -f "$KEY.sec" ] && sign_ports
+	fi
+	return 0
+}
+
+make_key() {
+	root key
+	[ -f "$KEY.sec" ] && { echo "You already have a key: $KEY.pub"; return 0; }
+	install -d -m 755 /etc/ports
+	signify -G -n -c "Avalon ports, signed on $(hostname)" -p "$KEY.pub" -s "$KEY.sec"
+	chmod 600 "$KEY.sec"
+	say "Your key: $KEY.pub (the secret half, $KEY.sec, never leaves this machine)"
+}
+
+sign_ports() {
+	[ -f "$KEY.sec" ] || die "no key yet: sudo metamelayer key"
+	if [ $# -eq 0 ]; then set -- $(ls "$PORTS"); fi
+	for p in "$@"; do
+		[ -f "$PORTS/$p/Pkgfile" ] || continue
+		( cd "$PORTS/$p" && pkgmk -d -us -sk "$KEY.sec" >/dev/null ) && echo "    signed $p" ||
+			echo "    could not sign $p (its sources didn't download?)"
+	done
+}
+
+[ $# -ge 1 ] || { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+cmd=$1; shift
+case $cmd in
+	sync)            root sync; sync_ports ;;
+	install|in)      root install; exec prt-get depinst "$@" ;;
+	remove|rm)       root remove; exec prt-get remove "$@" ;;
+	upgrade|up)      root upgrade; sync_ports; exec prt-get sysup ;;
+	search|s)        exec prt-get search "$@" ;;
+	info)            exec prt-get info "$@" ;;
+	list|ls)         exec prt-get listinst ;;
+	diff)            exec prt-get diff ;;
+	key)             make_key ;;
+	sign)            root sign; sign_ports "$@" ;;
+	*)               die "unknown command '$cmd' (metamelayer with no arguments lists them)" ;;
+esac

@@ -1,0 +1,67 @@
+#!/bin/sh
+# avalon-setup: turn a freshly installed CRUX 3.8 into Avalon. Run once, as root, on the laptop,
+# after CRUX's own install (setup, kernel, GRUB) has booted and the network is up:
+#
+#   git clone https://github.com/factionparadox/Iskra /usr/ports/avalon
+#   /usr/ports/avalon/avalon-setup YOURNAME
+#
+# It switches on CRUX's contrib ports, adds Avalon's, makes your own signing key and signs
+# Avalon's ports with it, then builds and installs Avalon (Mango, Quickshell, kitty, greetd...)
+# with prt-get: everything not on the CRUX ISO is compiled here, and you can watch it. Services,
+# your user's groups and the login screen are set at the end. Safe to run again.
+set -e
+USER_NAME=${1:-}
+AVALON=/usr/ports/avalon
+
+say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+die()  { printf '\n\033[1;35mavalon-setup: %s\033[0m\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "run it as root"
+[ -f /etc/pkgadd.conf ] && command -v prt-get >/dev/null || die "this isn't CRUX (no pkgutils / prt-get)"
+[ -d "$AVALON/ports" ] || die "Avalon isn't at $AVALON: git clone https://github.com/factionparadox/Iskra $AVALON"
+[ -n "$USER_NAME" ] || die "say whose desktop it is: avalon-setup YOURNAME"
+
+say "CRUX's contrib ports (Wayland, greetd, PipeWire, NetworkManager... live there)"
+[ -f /etc/ports/contrib.rsync.inactive ] && mv /etc/ports/contrib.rsync.inactive /etc/ports/contrib.rsync
+ports -u
+
+say "prt-get: contrib and Avalon's ports, and running ports' install scripts"
+conf=/etc/prt-get.conf
+sed -i 's|^#[[:space:]]*prtdir /usr/ports/contrib|prtdir /usr/ports/contrib|' $conf
+grep -q '^prtdir /usr/ports/contrib' $conf || echo 'prtdir /usr/ports/contrib' >> $conf
+grep -q "^prtdir $AVALON/ports" $conf || echo "prtdir $AVALON/ports" >> $conf
+sed -i 's|^#[[:space:]]*runscripts.*|runscripts yes|' $conf
+grep -q '^runscripts yes' $conf || echo 'runscripts yes' >> $conf
+
+say "pkgmk: build with every core ($(nproc))"
+sed -i "s|^#\?[[:space:]]*export MAKEFLAGS=.*|export MAKEFLAGS=\"-j$(nproc)\"|" /etc/pkgmk.conf
+grep -q '^export MAKEFLAGS' /etc/pkgmk.conf || echo "export MAKEFLAGS=\"-j$(nproc)\"" >> /etc/pkgmk.conf
+
+say "Metamelayer, and your own key for Avalon's ports"
+install -m 755 "$AVALON/desktop/usr/bin/metamelayer" /usr/bin/metamelayer
+metamelayer key
+metamelayer sign
+
+say "Building Avalon (this is the long part: Mango, Quickshell, greetd and what they need)"
+prt-get depinst avalon
+
+say "Services: D-Bus, seatd, NetworkManager, Bluetooth and the login screen"
+for s in dbus seatd networkmanager bluetoothd greetd; do
+	grep -q "SERVICES=.*\b$s\b" /etc/rc.conf || sed -i "s|^SERVICES=(\(.*\))|SERVICES=(\1 $s)|" /etc/rc.conf
+done
+grep '^SERVICES=' /etc/rc.conf
+
+say "$USER_NAME: groups for the seat, sound, video, input and sudo"
+id "$USER_NAME" >/dev/null 2>&1 || { useradd -m -s /bin/bash "$USER_NAME"; passwd "$USER_NAME"; }
+for g in wheel video audio input seat; do
+	getent group $g >/dev/null || groupadd $g
+	usermod -aG $g "$USER_NAME"
+done
+# the login screen's user may use the seat too
+getent passwd greeter >/dev/null && usermod -aG video,input,seat greeter
+
+say "Avalon's name"
+install -m 644 /usr/share/avalon/os-release /etc/os-release
+
+say "Done. Reboot: the Garden System's login screen will greet you."
+echo "   Later: 'sudo metamelayer upgrade' to update, 'avalon' for Avalon's own commands."

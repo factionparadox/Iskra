@@ -29,8 +29,24 @@ No Flatpak: everything is a native package.
 |---|---|
 | `ports/` | Avalon's CRUX ports collection: what CRUX doesn't have (Mango, scenefx, Quickshell, kitty, cage, cJSON, CLI11) |
 | `desktop/` | The Garden System's settings and tools, as they're installed (`etc/`, `usr/`) |
-| `branding/` | Pasha and the artwork |
+| `desktop/etc/xdg/quickshell/garden/` | The Garden System shell: bar, launcher, notifications, lock, power menu, key reference, Neredy |
+| `desktop/usr/share/garden/greeter.qml` | The login screen (greetd) |
+| `branding/` | Pasha and the artwork; `build/make-garden-art.py` draws the wallpaper |
 | `russian/` | The Russian learning kit, to become Neredy's tutor |
+
+## Installing
+
+1. Install CRUX 3.8 from its ISO as usual (CRUX's `setup`, then your kernel and GRUB), reboot,
+   get online.
+2. As root:
+
+       git clone https://github.com/factionparadox/Iskra /usr/ports/avalon
+       /usr/ports/avalon/avalon-setup YOURNAME
+
+   It enables CRUX's contrib ports, adds Avalon's, makes your own signing key and signs Avalon's
+   ports with it, builds Avalon with prt-get (you can watch every build), and sets up the
+   services, your groups and the login screen.
+3. Reboot into the Garden System.
 
 ## Status
 
