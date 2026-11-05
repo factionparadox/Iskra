@@ -1,0 +1,12 @@
+#!/bin/bash
+# cage.SlackBuild: cage, the one-window Wayland compositor the login screen (gtkgreet) runs in.
+# From a commit that builds on wlroots 0.20. Run in this folder, as root.
+PRGNAM=cage
+. ../lib.sh
+SRC=cage-f551ca26385de6da7413bce94ad95b7509c02546
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz; cd $SRC
+CFLAGS="$SLKCFLAGS" meson setup build --prefix=/usr --libdir=lib64 --buildtype=release -Dman-pages=disabled
+meson compile -C build
+DESTDIR=$PKG meson install -C build
+install -Dm644 LICENSE $PKG/usr/doc/$PRGNAM-$VERSION/LICENSE
+finish

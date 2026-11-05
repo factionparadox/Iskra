@@ -1,0 +1,13 @@
+#!/bin/bash
+# gtkgreet.SlackBuild: the login screen, a small GTK greeter for greetd, styled with CSS (Iskra's
+# theme comes with iskra-desktop). Run in this folder, as root.
+PRGNAM=gtkgreet
+. ../lib.sh
+SRC=gtkgreet-347f0c96b4c2ea5bb118269f5069f85a997ef9a4
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz; cd $SRC
+CFLAGS="$SLKCFLAGS" meson setup build --prefix=/usr --libdir=lib64 --buildtype=release \
+  -Dman-pages=disabled -Dlayershell=disabled
+meson compile -C build
+DESTDIR=$PKG meson install -C build
+install -Dm644 LICENSE $PKG/usr/doc/$PRGNAM-$VERSION/LICENSE
+finish

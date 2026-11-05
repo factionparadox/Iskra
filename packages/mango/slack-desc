@@ -1,0 +1,17 @@
+# HOW TO EDIT THIS FILE:
+# The "handy ruler" below makes it easier to edit a package description.
+# Line up the first '|' above the ':' following the base package name, and
+# the '|' on the right side marks the last column you can put a character in.
+
+  |-----handy-ruler------------------------------------------------------|
+mango: mango (a Wayland compositor: tiling, scrolling, blur)
+mango:
+mango: Mango is a Wayland compositor built on dwl: tags, many layouts
+mango: including a Niri-style scroller, animations, and blur, shadows
+mango: and rounded corners from scenefx. Configured in /etc/mango.
+mango:
+mango: Homepage: https://github.com/mangowm/mango
+mango:
+mango:
+mango:
+mango:

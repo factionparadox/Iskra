@@ -1,0 +1,14 @@
+#!/bin/bash
+# mango.SlackBuild: Mango, the Wayland compositor (dwl-based; scroller layout, blur via scenefx).
+# Run in this folder, as root.
+PRGNAM=mango
+. ../lib.sh
+SRC=mango-faaf4a961f943692f2657eb992a8aa90022f921e
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz; cd $SRC
+CFLAGS="$SLKCFLAGS" meson setup build --prefix=/usr --libdir=lib64 --sysconfdir=/etc --buildtype=release
+meson compile -C build
+DESTDIR=$PKG meson install -C build
+# its example settings go in as .new; Iskra's own (iskra-desktop) are what's used
+[ -f $PKG/etc/mango/config.conf ] && mv $PKG/etc/mango/config.conf $PKG/etc/mango/config.conf.new
+install -d $PKG/usr/doc/$PRGNAM-$VERSION; cp -a LICENSE* README.md $PKG/usr/doc/$PRGNAM-$VERSION/
+finish

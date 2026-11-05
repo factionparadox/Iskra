@@ -4,14 +4,14 @@
 # the '|' on the right side marks the last column you can put a character in.
 
   |-----handy-ruler------------------------------------------------------|
-ly: ly (a login screen for the console)
-ly:
-ly: ly, a lightweight text-mode display manager: Iskra's login screen,
-ly: on the first console. Built as Arch builds it, with zig.
-ly:
-ly: https://codeberg.org/fairyglade/ly
-ly:
-ly:
-ly:
-ly:
-ly:
+cage: cage (a Wayland compositor for one full-screen program)
+cage:
+cage: cage shows one program full-screen and nothing else. Iskra runs
+cage: its login screen, gtkgreet, in it.
+cage:
+cage:
+cage: Homepage: https://github.com/cage-kiosk/cage
+cage:
+cage:
+cage:
+cage:

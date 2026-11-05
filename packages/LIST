@@ -15,26 +15,30 @@
 fakeroot                ponce:system/fakeroot
 slpkg                   ponce:system/slpkg  patch=packages/slpkg/iskra.patch
 
-# the desktop
-ratpoison               ponce:desktop/ratpoison
-polybar                 ponce:desktop/polybar
-dmenu                   ponce:desktop/dmenu
+# the desktop: Mango (Wayland), kitty, waybar, wofi; greetd + gtkgreet to log in
+scenefx                 iskra:scenefx      # Mango's blur, shadows and rounded corners
+mango                   iskra:mango        # the compositor: tags, Niri-style scroller
+kitty                   iskra:kitty        # kitty's own ready-made build
+waybar                  ponce:desktop/waybar
+wofi                    ponce:desktop/wofi
 dunst                   ponce:desktop/dunst
-feh                     ponce:graphics/feh
-slock                   ponce:desktop/slock
-xss-lock                ponce:desktop/xss-lock
-redshift                ponce:desktop/redshift
-xbanish                 ponce:misc/xbanish
+swaylock                ponce:desktop/swaylock
+swayidle                ponce:desktop/swayidle
+swaybg                  ponce:desktop/swaybg
+wlsunset                ponce:desktop/wlsunset
+grim                    ponce:desktop/grim
+slurp                   ponce:desktop/slurp
+swappy                  ponce:graphics/swappy
+wl-clipboard            ponce:misc/wl-clipboard
+playerctl               ponce:multimedia/playerctl
+xdg-desktop-portal-wlr  ponce:system/xdg-desktop-portal-wlr
 brightnessctl           ponce:system/brightnessctl
-clipmenu                ponce:desktop/clipmenu
-maim                    ponce:graphics/maim
+greetd                  ponce:system/greetd
+cage                    iskra:cage         # the login screen runs in it
+gtkgreet                iskra:gtkgreet     # the login screen
 plan9port               ponce:system/plan9port
-x-terminal              iskra:x-terminal
 font-go                 iskra:font-go
 font-ipaex              iskra:font-ipaex
-zig                     iskra:zig          # ly is built with it; its own build (from source: hours)
-ly                      iskra:ly           # Arch's way, from git at Arch's commits
-oxwm                    iskra:oxwm         # the window manager; zig 0.16, seconds
 networkmanager-dmenu    arch:networkmanager-dmenu
 # later (doesn't build yet): udiskie                 arch:udiskie
 pulsemixer              ponce:audio/pulsemixer

@@ -1,0 +1,7 @@
+PRGNAM="gtkgreet"
+VERSION="0.8+git20261025"
+HOMEPAGE="https://git.sr.ht/~kennylevinsen/gtkgreet"
+DOWNLOAD="git+https://git.sr.ht/~kennylevinsen/gtkgreet#commit=347f0c96b4c2ea5bb118269f5069f85a997ef9a4"
+SHA256SUM="SKIP"
+REQUIRES="greetd cage"
+MAINTAINER="Iskra"

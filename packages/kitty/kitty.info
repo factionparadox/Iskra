@@ -1,0 +1,7 @@
+PRGNAM="kitty"
+VERSION="0.50.0"
+HOMEPAGE="https://sw.kovidgoyal.net/kitty/"
+DOWNLOAD="https://github.com/kovidgoyal/kitty/releases/download/v0.50.0/kitty-0.50.0-x86_64.txz"
+SHA256SUM="f04b11775574d6aabfb529b7e734cc0a7d7d12c7df9fb8ec1843e45420e514ee"
+REQUIRES=""
+MAINTAINER="Iskra"

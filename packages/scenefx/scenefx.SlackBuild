@@ -1,0 +1,12 @@
+#!/bin/bash
+# scenefx.SlackBuild: the effects library Mango draws with (blur, shadows, rounded corners), on
+# Slackware's wlroots 0.20. Run in this folder, as root.
+PRGNAM=scenefx
+. ../lib.sh
+SRC=scenefx-37ccd723bef49e6891156ffafce8f549f01446cc
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz; cd $SRC
+CFLAGS="$SLKCFLAGS" meson setup build --prefix=/usr --libdir=lib64 --buildtype=release -Dexamples=false
+meson compile -C build
+DESTDIR=$PKG meson install -C build
+install -Dm644 LICENSE $PKG/usr/doc/$PRGNAM-$VERSION/LICENSE
+finish
