@@ -96,7 +96,7 @@ sed -i "s|^MIRROR = \"https://github.com/factionparadox/Iskra/releases/download/
 cp "$keys/iskra.asc" "$keys/FINGERPRINTS" "$ROOT/usr/share/sparkpkg/keys/"
 
 say "The repositories' package lists (sparkpkg sync)"
-yes y | run sparkpkg sync > "$WORK/sync.log" 2>&1 || { tail -30 "$WORK/sync.log"; die "sparkpkg sync failed"; }
+run sh -c "yes y | sparkpkg sync" > "$WORK/sync.log" 2>&1 || { tail -30 "$WORK/sync.log"; die "sparkpkg sync failed"; }
 grep -E "trusted|Error" "$WORK/sync.log" || true
 
 say "Iskra, and everything it needs that Slackware's series don't have"
