@@ -104,6 +104,11 @@ into the Garden System." 13 76
 
 get_online
 
+# a snapshot of the system as installed, before the build: "Avalon as it was" in the boot menu
+# starts it again from here if ever needed (once: not again on a retry)
+SNAPSHOT=/usr/sbin/avalon-snapshot; [ -x $SNAPSHOT ] || SNAPSHOT=/usr/ports/avalon/desktop/usr/sbin/avalon-snapshot
+ls -d /.snapshots/*-fresh-install >/dev/null 2>&1 || sh $SNAPSHOT take "fresh install" 2>&1 | tee -a $LOG || true
+
 while :; do
 	{ /usr/ports/avalon/avalon-setup "$USER_NAME"; echo $? > /run/avalon-firstboot.rc; } 2>&1 | tee -a $LOG |
 		dialog --backtitle "$TITLE" --title " Building Avalon (log: $LOG) " --progressbox "$(rows)" "$(cols)"
@@ -133,6 +138,8 @@ rm -f $FLAG
 sed -i '/avalon-firstboot/d' /root/.bash_profile
 pkill -x wpa_supplicant; pkill -x dhcpcd                               # NetworkManager from now on
 rm -f $WPA_CONF
+# and one of Avalon as built, which also puts the snapshot entries in the boot menu
+[ -x /usr/sbin/avalon-snapshot ] && /usr/sbin/avalon-snapshot take "avalon built" >> $LOG 2>&1
 d --title " Built " --msgbox "\n\Zb\Z2Avalon is built.\Zn\n\nIt restarts now, into the Garden System. Log in as \Zb$USER_NAME\Zn." 10 64
 clear
 reboot

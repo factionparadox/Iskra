@@ -56,7 +56,10 @@ CCACHE
 fi
 
 say "Metamelayer, and your own key for Avalon's ports"
-install -m 755 "$AVALON/desktop/usr/bin/metamelayer" /usr/bin/metamelayer
+# metamelayer arrives with the avalon-desktop package; until then it runs straight from Avalon's
+# ports (a copy of it in /usr/bin would collide with the package's own, and pkgadd would refuse)
+grep -qx 'usr/bin/metamelayer' /var/lib/pkg/db || rm -f /usr/bin/metamelayer
+metamelayer() { sh "$AVALON/desktop/usr/bin/metamelayer" "$@"; }
 metamelayer key
 
 say "Name, clock, keyboard and languages"

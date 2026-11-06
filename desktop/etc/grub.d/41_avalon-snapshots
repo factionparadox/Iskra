@@ -1,0 +1,5 @@
+#!/bin/sh
+# Avalon: the boot menu's "Avalon as it was" entries, one for each snapshot in /.snapshots
+# (avalon-snapshot writes them; metamelayer takes a snapshot before each install and upgrade)
+[ -x /usr/sbin/avalon-snapshot ] && exec /usr/sbin/avalon-snapshot menu
+exit 0

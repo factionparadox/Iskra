@@ -115,9 +115,18 @@ steps() {
 		partx -u "$disk" 2>/dev/null || blockdev --rereadpt "$disk" 2>/dev/null || true
 		local i=0; while [ ! -b "${part}2" ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 		mkfs.fat -F32 -n EFI "${part}1"
-		mkfs.ext4 -q -F -L avalon "${part}2"
+		# Btrfs, for snapshots: the system in @ (/), your files in @home, logs in @log, and the
+		# snapshots in @snapshots, so going back to one never takes your files or logs with it
+		mkfs.btrfs -q -f -L avalon "${part}2"
 		mount "${part}2" $ROOT
-		mkdir -p $ROOT/boot/efi
+		for sv in @ @home @log @snapshots; do btrfs subvolume create "$ROOT/$sv" >/dev/null; done
+		umount $ROOT
+		local o=compress=zstd:1,noatime
+		mount -o "subvol=@,$o" "${part}2" $ROOT
+		mkdir -p $ROOT/home $ROOT/var/log $ROOT/.snapshots $ROOT/boot/efi
+		mount -o "subvol=@home,$o" "${part}2" $ROOT/home
+		mount -o "subvol=@log,$o" "${part}2" $ROOT/var/log
+		mount -o "subvol=@snapshots,$o" "${part}2" $ROOT/.snapshots
 		mount "${part}1" $ROOT/boot/efi
 	fi
 	ESP=$(awk -v r="$ROOT" '$2 ~ "^"r"/" && $3 == "vfat" {print $2; exit}' /proc/mounts)
@@ -132,7 +141,7 @@ steps() {
 	say "Gentoo's kernel, firmware, and what the first boot needs (Wi-Fi, menus, GRUB, prt-utils)"
 	add linux-firmware
 	add gentoo-kernel-bin
-	for p in wpa_supplicant dialog grub2-efi prt-utils; do
+	for p in wpa_supplicant dialog grub2-efi prt-utils btrfs-progs; do
 		for dep in $(grep "^$p:" "$DEPS" | cut -d: -f2); do add "$dep"; done
 	done
 	for k in $ROOT/lib/modules/*-gentoo-dist-bin; do chroot $ROOT depmod -a "${k##*/}"; done
@@ -169,12 +178,20 @@ steps() {
 	if ! grep -qE '^[^#]+[[:space:]]/[[:space:]]' $ROOT/etc/fstab; then
 		{
 			echo "# Avalon: written by avalon-install"
-			awk -v r="$ROOT" '$2 == r || $2 ~ "^"r"/" {print $1, $2, $3}' /proc/mounts |
-			while read -r dev mnt fs; do
+			awk -v r="$ROOT" '$2 == r || $2 ~ "^"r"/" {print $1, $2, $3, $4}' /proc/mounts |
+			while read -r dev mnt fs mopts; do
 				case $dev in /dev/*) ;; *) continue ;; esac
 				where=${mnt#$ROOT}; where=${where:-/}
 				[ "$where" = / ] && pass=1 || pass=2
-				[ "$fs" = vfat ] && opts=defaults,umask=0077 || opts=defaults,noatime
+				case $fs in
+					vfat)  opts=defaults,umask=0077 ;;
+					btrfs) # / leaves its subvolume to the kernel's rootflags (so a snapshot can be
+					       # started from GRUB); the others name theirs. Btrfs isn't checked at boot
+					       sv=$(echo "$mopts" | tr , '\n' | sed -n 's|^subvol=/\{0,1\}||p')
+					       opts=compress=zstd:1,noatime; pass=0
+					       if [ "$where" != / ] && [ -n "$sv" ]; then opts="$opts,subvol=$sv"; fi ;;
+					*)     opts=defaults,noatime ;;
+				esac
 				echo "UUID=$(blkid -s UUID -o value "$dev")  $where  $fs  $opts  0 $pass"
 			done
 		} >> $ROOT/etc/fstab
@@ -213,6 +230,10 @@ GRUB_THEME=/boot/grub/themes/avalon/theme.txt
 GRUB_GFXMODE=auto
 GRUB_TERMINAL_OUTPUT=gfxterm
 EOF
+	if [ "$(findmnt -no FSTYPE $ROOT)" = btrfs ] && [ "$(findmnt -no FSROOT $ROOT)" = /@ ]; then
+		# the normal entry always starts the system's own subvolume (snapshots get entries of their own)
+		echo 'GRUB_CMDLINE_LINUX="rootfstype=btrfs rootflags=subvol=@ rootwait"' >> $ROOT/etc/default/grub
+	fi
 	rm -rf $ROOT/boot/grub/themes/avalon
 	cp -r "$MEDIA/avalon/repo/desktop/usr/share/avalon/grub-theme" $ROOT/boot/grub/themes/avalon
 	inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --bootloader-id=Avalon

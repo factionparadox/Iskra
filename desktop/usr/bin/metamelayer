@@ -25,6 +25,15 @@
 #                                  Avalon's ports, filled in from Arch's package (description,
 #                                  URL, version, dependencies as CRUX ports, a build() for its
 #                                  build system); you add the source address
+#   metamelayer snapshot [WHY]     a snapshot of the system now (Btrfs: quick, and small until
+#                                  things change). One is taken by itself before every install,
+#                                  upgrade and removal; the newest 10 of those are kept
+#   metamelayer snapshots          the snapshots, newest first
+#   metamelayer rollback NAME      from the next start, the system is as it was in snapshot NAME
+#                                  (your files and logs stay as they are; what you have now is
+#                                  kept as a snapshot, so a rollback can be undone). The boot menu's
+#                                  "Avalon as it was" starts a snapshot to try it, without keeping it
+#   metamelayer forget NAME...     delete snapshots
 #   metamelayer cache              what the compiler cache (ccache) has saved: a rebuild of
 #                                  something already built once mostly comes from it
 #   metamelayer key                make your own signing key for Avalon's ports (once)
@@ -87,6 +96,10 @@ DEPS=/usr/lib/avalon/metamelayer-deps
 [ -f "$DEPS" ] || DEPS=$AVALON/desktop/usr/lib/avalon/metamelayer-deps   # before avalon-desktop is installed
 installed() { pkginfo -i 2>/dev/null | sort; }
 
+SNAPSHOT=/usr/sbin/avalon-snapshot
+[ -f "$SNAPSHOT" ] || SNAPSHOT=$AVALON/desktop/usr/sbin/avalon-snapshot
+snap_first() { sh "$SNAPSHOT" take --auto "$@" || echo "    (no snapshot this time; carrying on)"; }
+
 fix() {
 	say "Looking for anything an update broke (programs whose libraries are missing)"
 	broken=$(python3 "$DEPS" check || true)
@@ -142,13 +155,19 @@ with_check() {   # run a prt-get command, then check what it changed and fix wha
 	return $status
 }
 
-[ $# -ge 1 ] || { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd=$1; shift
 case $cmd in
 	sync)            root sync; sync_ports ;;
-	install|in)      root install; arch_check "$@"; with_check depinst "$@" ;;
-	remove|rm)       root remove; exec prt-get remove "$@" ;;
-	upgrade|up)      root upgrade; sync_ports; with_check sysup ;;
+	install|in)      root install; [ $# -gt 0 ] || die "install what?"
+	                 arch_check "$@"; snap_first "before install $*"; with_check depinst "$@" ;;
+	remove|rm)       root remove; [ $# -gt 0 ] || die "remove what?"
+	                 snap_first "before remove $*"; exec prt-get remove "$@" ;;
+	upgrade|up)      root upgrade; sync_ports; snap_first "before upgrade"; with_check sysup ;;
+	snapshot)        root snapshot; exec sh "$SNAPSHOT" take "$@" ;;
+	snapshots)       exec sh "$SNAPSHOT" list ;;
+	rollback)        root rollback; exec sh "$SNAPSHOT" rollback "$@" ;;
+	forget)          root forget; exec sh "$SNAPSHOT" forget "$@" ;;
 	search|s)        exec prt-get search "$@" ;;
 	info)            exec prt-get info "$@" ;;
 	list|ls)         exec prt-get listinst ;;

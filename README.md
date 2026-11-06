@@ -13,6 +13,7 @@ The first release is **Avalon 1 "Iskra"**.
 | Base | CRUX 3.8: pkgutils, ports, BSD-style init, no systemd |
 | Kernel | Gentoo's prebuilt distribution kernel (7.3), for the Panther Lake graphics, NPU and Wi-Fi 7 |
 | Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key. Like NuTyX's CARDS, it reads the libraries each program loads: it says when a Pkgfile misses a dependency, and rebuilds whatever an update broke (`metamelayer deps`, `check`, `fix`) |
+| Snapshots | Btrfs: one is taken by itself before every install, upgrade and removal, and the boot menu's **Avalon as it was** starts any of them. `metamelayer rollback NAME` makes one the system again (your files and logs stay as they are), and can itself be undone |
 | Flatpak | Only for apps published nowhere else, such as Sober: `metamelayer flatpak install org.vinegarhq.Sober` |
 | Compositor | **MangoWC** (Wayland, dwl-based): tags, a Niri-style scroller, blur via scenefx |
 | Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, Command Mode, notifications, lock, login |
@@ -56,17 +57,33 @@ current firmware and Neredy's Russian voice, and writes
 2. The installer starts by itself, in large type, as menus like CRUX's own setup. It asks your
    username, your password and root's, which disk (from a list), and whether to erase it (yes or
    no). Then it installs from the stick, with no internet and nothing compiled, showing its
-   progress: CRUX's core, Gentoo's prebuilt kernel and firmware, Avalon's ports,
+   progress: the disk (Btrfs, with the system, your files, the logs and the snapshots each in a
+   subvolume of their own), CRUX's core, Gentoo's prebuilt kernel and firmware, Avalon's ports,
    fstab, you, and GRUB with the Garden's boot screen.
 3. Restart (it offers to), taking the stick out. **The first start builds Avalon on the laptop**:
    it lists the Wi-Fi networks it can see and asks for the password (or use a cable), then builds
-   Avalon with the build scrolling past, and restarts into the Garden System. If a build fails it
+   Avalon with the build scrolling past, and restarts into the Garden System. It takes a
+   snapshot just before the build ("fresh install") and one when it's done ("avalon built"). If a build fails it
    offers to try again (carrying on), show the log, or open a shell; `avalon-firstboot` carries
    on later too. Once Avalon is built, NetworkManager looks after the network (`nmtui`, or
    Avalon Control), with your Wi-Fi already saved.
 
 To lay the disk out yourself, open a shell on the stick (Alt+F2, log in as root), partition and
 mount it under `/mnt` (EFI at `/mnt/boot/efi`), and run `/media/avalon-install`: it uses that.
+Snapshots need the same layout as the installer's: Btrfs, with subvolumes `@` at `/`, `@home`,
+`@log` at `/var/log` and `@snapshots` at `/.snapshots`. On any other layout Avalon works the
+same, just without snapshots.
+
+### Snapshots
+
+    metamelayer snapshots              what there is, newest first
+    sudo metamelayer snapshot WHY      one now, kept until you forget it
+    sudo metamelayer rollback NAME     the system as it was in NAME, from the next start
+    sudo metamelayer forget NAME       delete one
+
+The automatic ones (before each install, upgrade and removal) keep the newest 10. To try a
+snapshot without committing, pick it under **Avalon as it was** in the boot menu; to keep it,
+`sudo metamelayer rollback NAME` from there.
 
 ### Something CRUX doesn't have
 
