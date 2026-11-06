@@ -1,5 +1,6 @@
 # Description: Wayland compositor on dwl: tags, a Niri-style scroller, animations, blur
 # URL: https://github.com/mangowm/mango
+# Arch: mangowm
 # Maintainer: Avalon
 # Depends on: scenefx wlroots cjson libpcre2 libinput libxkbcommon pango xorg-xwayland xorg-xcb-util-wm
 

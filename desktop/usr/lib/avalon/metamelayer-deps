@@ -23,6 +23,7 @@ Only reads: it never changes the system (metamelayer does the rebuilding).
 """
 import os
 import re
+import signal
 import struct
 import subprocess
 import sys
@@ -306,7 +307,7 @@ AUR = 'https://aur.archlinux.org/rpc/v5/info?arg[]='
 # Arch names that CRUX spells differently (checked against the ports before being used)
 RENAMES = {'python': 'python3', 'freetype2': 'freetype', 'libgl': 'libglvnd', 'sh': 'bash',
            'python-gobject': 'python3-gobject', 'wlroots0.20': 'wlroots', 'wlroots0.19': 'wlroots',
-           'gcc-libs': 'gcc', 'libgcc': 'gcc', 'libstdc++': 'gcc', 'pam': 'linux-pam',
+           'gcc-libs': 'gcc', 'glib2': 'glib', 'pcre2': 'libpcre2', 'pcre': 'libpcre', 'libgcc': 'gcc', 'libstdc++': 'gcc', 'pam': 'linux-pam',
            'libxkbcommon-x11': 'libxkbcommon', 'libpipewire': 'pipewire', 'xorg-server-xwayland': 'xorg-xwayland',
            'systemd-libs': None, 'systemd': None}
 
@@ -331,22 +332,57 @@ def fetch_json(url):
         return json.load(r)
 
 
-def arch_lookup(name):
-    """Arch's (or the AUR's) record for name: dict with source, version, url, depends, makedepends"""
-    tries = [name]
+def pkgfile_field(name, field):
+    _w, f = declared(name)
+    if f:
+        for line in open(f, encoding='utf-8', errors='replace'):
+            m = re.match(r'#\s*' + field + r':\s*(\S+)', line)
+            if m:
+                return m.group(1)
+    return ''
+
+
+def arch_lookup(name, url=''):
+    """Arch's (or the AUR's) record for name: dict with source, version, url, depends, makedepends.
+    Arch may call it something else: a Pkgfile's "# Arch: NAME" line says so; failing that, the
+    name with wm/wc, then a search for the name, kept only if the homepage is the same project."""
+    tries = [pkgfile_field(name, 'Arch')] if pkgfile_field(name, 'Arch') else []
+    tries += [name, name + 'wm', name + 'wc']
     if name.startswith('python3-'):
         tries.append('python-' + name[8:])
+    found = arch_exact(tries, url, name)
+    if found is not None:
+        return found
+    if url:                                           # by homepage: a search for the name
+        try:
+            for r in fetch_json('https://archlinux.org/packages/search/json/?q=' + urllib.parse.quote(name)).get('results', []):
+                if same_project(url, r.get('url', ''), name) and urllib.parse.urlparse(url).netloc == urllib.parse.urlparse(r.get('url', '')).netloc:
+                    return arch_record(r)
+        except (OSError, ValueError):
+            pass
+    return arch_exact([name], '', name)                 # whatever has the name, for the "different project" note
+
+
+def arch_record(r):
+    return {'from': f"Arch ({r['repo']})", 'name': r['pkgname'], 'version': r['pkgver'], 'url': r.get('url', ''),
+            'desc': r.get('pkgdesc', ''), 'depends': r.get('depends', []), 'makedepends': r.get('makedepends', [])}
+
+
+def arch_exact(tries, url, name):
+    """the first of tries that Arch (stable repositories first) or the AUR has, and that (when
+    there's a homepage to compare) is the same project"""
     for n in tries:
         try:
-            for r in fetch_json(ARCH + urllib.parse.quote(n)).get('results', []):
-                if r.get('pkgname') == n:
-                    return {'from': f"Arch ({r['repo']})", 'name': n, 'version': r['pkgver'], 'url': r.get('url', ''),
-                            'desc': r.get('pkgdesc', ''), 'depends': r.get('depends', []),
-                            'makedepends': r.get('makedepends', []) + r.get('checkdepends', [])[:0]}
+            hits = [r for r in fetch_json(ARCH + urllib.parse.quote(n)).get('results', []) if r.get('pkgname') == n]
+            hits.sort(key=lambda r: 'testing' in r.get('repo', ''))
+            for r in hits:
+                if not url or same_project(url, r.get('url', ''), name):
+                    return arch_record(r)
             for r in fetch_json(AUR + urllib.parse.quote(n)).get('results', []):
-                return {'from': 'the AUR', 'name': r['Name'], 'version': r['Version'], 'url': r.get('URL') or '',
-                        'desc': r.get('Description') or '', 'depends': r.get('Depends') or [],
-                        'makedepends': r.get('MakeDepends') or []}
+                if not url or same_project(url, r.get('URL') or '', name):
+                    return {'from': 'the AUR', 'name': r['Name'], 'version': r['Version'], 'url': r.get('URL') or '',
+                            'desc': r.get('Description') or '', 'depends': r.get('Depends') or [],
+                            'makedepends': r.get('MakeDepends') or []}
         except (OSError, ValueError) as e:
             return {'error': str(e)}
     return None
@@ -397,7 +433,7 @@ def cmd_arch(names):
 
     worst = 0
     for name in names:
-        a = arch_lookup(name)
+        a = arch_lookup(name, pkgfile_field(name, 'URL'))
         if a is None:
             print(f'{name}: not in Arch or the AUR; its "Depends on" line is up to you (and metamelayer deps checks it once built)')
             continue
@@ -473,4 +509,5 @@ def main(argv):
 
 
 if __name__ == '__main__':
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # quietly stop when piped into head
     sys.exit(main(sys.argv[1:]))
