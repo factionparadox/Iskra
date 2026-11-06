@@ -40,6 +40,13 @@ while :; do
 	d --title " You " --msgbox "\n\"$USER_NAME\" won't do: small letters, numbers, - and _, starting with a letter." 9 64
 done
 
+disk_info() {   # "953.9 GB  WD_BLACK SN850X" for a disk name, from /sys
+	local b=/sys/block/$1 sectors model
+	sectors=$(cat "$b/size" 2>/dev/null || echo 0)
+	model=$(cat "$b/device/model" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
+	awk -v s="$sectors" -v m="${model:-disk}" 'BEGIN { printf "%.1f GB  %s", s * 512 / 1e9, m }'
+}
+
 pw() {   # ask twice until both match; the password on stdout
 	local who=$1 a b
 	while :; do
@@ -53,21 +60,31 @@ USER_PW=$(pw "$USER_NAME") || quit "Stopped; nothing was touched."
 ROOT_PW=$(pw "root (the administrator; day to day you use sudo)") || quit "Stopped; nothing was touched."
 
 if ! grep -q " $ROOT " /proc/mounts; then
-	# the disks, without the stick we're running from
-	# (the stick may be mounted as a whole disk, /dev/sda, or a partition of it, /dev/sda1)
+	# The disks, read straight from the kernel (/sys/block), without the stick we're running from.
+	# (Intel's VMD can hide NVMe drives until its driver is loaded: load it, and NVMe's, first.)
+	modprobe vmd 2>/dev/null; modprobe nvme 2>/dev/null; sleep 1
 	media_dev=$(awk '$2 == "/media" {print $1; exit}' /proc/mounts)
 	stick=${media_dev##*/}
 	[ -e "/sys/class/block/$stick/partition" ] && stick=$(basename "$(dirname "$(readlink -f "/sys/class/block/$stick")")")
 	menu=()
-	while read -r name size model; do
+	for dev in /sys/block/*; do
+		name=${dev##*/}
+		case $name in loop*|ram*|zram*|sr*|fd*|md*|dm-*|nbd*) continue ;; esac
 		[ "$name" = "$stick" ] && continue
-		menu+=("$name" "$size  ${model:-disk}")
-	done < <(lsblk -dn -e 7,11 -o NAME,SIZE,MODEL)
-	[ ${#menu[@]} -gt 0 ] || quit "No disk to install on was found."
-	DISK=$(d --title " The disk " --menu "\nInstall Avalon on which disk?" 14 70 6 "${menu[@]}") \
+		[ "$(cat "$dev/size" 2>/dev/null || echo 0)" -gt 0 ] || continue
+		menu+=("$name" "$(disk_info "$name")")
+	done
+	menu+=("other" "type a disk's name myself")
+	DISK=$(d --title " The disk " --menu "\nInstall Avalon on which disk?" 15 74 6 "${menu[@]}") \
 		|| quit "Stopped; nothing was touched."
+	if [ "$DISK" = other ]; then
+		DISK=$(d --title " The disk " --inputbox "\nWhat the kernel sees:\n\n$(ls /sys/block | tr '\n' ' ')\n\nThe stick: ${stick:-not found}\n\nWhich disk (e.g. nvme0n1)?" 16 74) \
+			|| quit "Stopped; nothing was touched."
+		DISK=${DISK#/dev/}
+		[ -b "/dev/$DISK" ] || quit "There's no disk called /dev/$DISK."
+	fi
 	d --title " Erase it? " --defaultno --yesno "\n\Zb\Z1Everything on $DISK will be erased.\Zn\n\n\
-$(lsblk -dno SIZE,MODEL /dev/$DISK)\n\n\
+$(disk_info "$DISK")\n\n\
 It gets a 1 GB EFI partition and Avalon on the rest. Go ahead?" 13 64 || quit "Stopped; nothing was touched."
 fi
 
