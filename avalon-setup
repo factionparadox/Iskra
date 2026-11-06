@@ -51,7 +51,11 @@ echo 'export LANG=en_GB.UTF-8' > /etc/profile.d/avalon-locale.sh
 install -m 644 "$AVALON/desktop/usr/share/avalon/os-release" /etc/os-release
 
 say "$USER_NAME: groups for sound, video, input and sudo"
-id "$USER_NAME" >/dev/null 2>&1 || { useradd -m -s /bin/bash "$USER_NAME"; passwd "$USER_NAME"; }
+if ! id "$USER_NAME" >/dev/null 2>&1; then
+	useradd -m -s /bin/bash "$USER_NAME"
+	echo "    Choose the password you'll log in with as $USER_NAME:"
+	passwd "$USER_NAME"
+fi
 for g in wheel video audio input seat; do
 	getent group $g >/dev/null || groupadd $g
 	usermod -aG $g "$USER_NAME"

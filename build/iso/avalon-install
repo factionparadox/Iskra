@@ -21,7 +21,7 @@ say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;35mavalon-install: %s\033[0m\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run it as root"
-[ -n "$USER_NAME" ] || die "say whose laptop it is: $0 YOURNAME"
+[ -n "$USER_NAME" ] || die "give the username you want to log in with, e.g.: $0 alex"
 [ -d "$MEDIA/avalon/repo" ] || die "this isn't an Avalon disc (no $MEDIA/avalon)"
 if ! grep -q " $ROOT " /proc/mounts; then
 	say "The disk (everything on it will be erased)"
@@ -164,7 +164,7 @@ inroot() { chroot $ROOT /usr/bin/env -i HOME=/root TERM="$TERM" PATH=/usr/sbin:/
 
 inroot sh /usr/ports/avalon/avalon-setup --offline "$USER_NAME"
 
-say "root's password"
+say "Choose root's password (the administrator; you use sudo day to day)"
 inroot passwd root
 
 say "GRUB (UEFI), on ${ESP#$ROOT}"

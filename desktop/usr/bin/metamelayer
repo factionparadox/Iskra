@@ -12,7 +12,8 @@
 #   metamelayer key                make your own signing key for Avalon's ports (once)
 #   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
 #   metamelayer gentoo [CMD...]    the escape hatch: Gentoo with Portage in /var/lib/gentoo
-#                                  (a shell there; or: emerge ARGS, sync, run PROGRAM, update)
+#                                  (a shell there; or: emerge ARGS, sync, run PROGRAM, update,
+#                                  unmount, remove). See docs/escape-hatch.md
 #
 # Avalon's ports are signed by you: the key lives in /etc/ports/avalon.{pub,sec} on this
 # machine and nowhere else, and pkgmk refuses a port whose files don't match its signature.
@@ -63,6 +64,20 @@ G=/var/lib/gentoo
 gentoo() {
 	root gentoo
 	[ -x $G/usr/bin/emerge ] || die "no Gentoo in $G (the Avalon disc puts it there)"
+	gentoo_unmount() {   # deepest first; /home is shared, so it must be off before any deleting
+		for m in $(awk -v g="$G/" 'index($2, g) == 1 {print $2}' /proc/mounts | sort -r); do
+			umount -l "$m"
+		done
+		! grep -q " $G/" /proc/mounts
+	}
+	case ${1:-} in
+		unmount) gentoo_unmount && say "Gentoo is unmounted"; return ;;
+		remove)
+			gentoo_unmount || die "something in $G is still mounted; reboot, then run this again"
+			printf 'Delete Gentoo (%s, %s)? Your home is not touched. Type yes: ' "$G" "$(du -sh $G | cut -f1)"
+			read -r ok; [ "$ok" = yes ] || die "kept"
+			rm -rf --one-file-system "$G" && say "Gentoo is gone"; return ;;
+	esac
 	grep -q " $G/proc " /proc/mounts || {
 		mount -t proc proc $G/proc
 		mount --rbind /sys $G/sys && mount --make-rslave $G/sys
@@ -70,7 +85,7 @@ gentoo() {
 		mount --bind /run $G/run
 		mount --bind /home $G/home
 		mount -t tmpfs tmpfs $G/tmp
-		mount --bind /tmp/.X11-unix $G/tmp/.X11-unix 2>/dev/null || true
+		[ -d /tmp/.X11-unix ] && mkdir -p $G/tmp/.X11-unix && mount --bind /tmp/.X11-unix $G/tmp/.X11-unix  || true
 	}
 	cp -L /etc/resolv.conf $G/etc/resolv.conf
 	u=${SUDO_USER:-}

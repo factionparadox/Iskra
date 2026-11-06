@@ -70,7 +70,9 @@ current firmware, a Gentoo base system with Portage and Neredy's Russian voice, 
 
 ### Portage, the escape hatch
 
-Gentoo lives in its own root, `/var/lib/gentoo`, so Portage and CRUX never overwrite each other:
+Gentoo lives in its own root, `/var/lib/gentoo`, so Portage and CRUX never overwrite each other.
+How it works, what it shares with Avalon and how to use it in an emergency:
+[docs/escape-hatch.md](docs/escape-hatch.md).
 
     sudo metamelayer gentoo                 # a shell in Gentoo
     sudo metamelayer gentoo emerge PACKAGE  # Gentoo's prebuilt packages where there are any
@@ -88,4 +90,4 @@ installer, the first-boot build, the ports and the Garden System get their first
 Keys are in `desktop/etc/mango/config.conf`; Super+/ shows them on the desktop.
 
 CRUX's own handbook is on the disc as `/media/crux/handbook.txt`; this file is there as
-`/media/AVALON-README.txt`.
+`/media/AVALON-README.txt`, with the technical documents in `/media/avalon-docs/`.
