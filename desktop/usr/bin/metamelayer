@@ -14,6 +14,8 @@
 #                                  its Pkgfile's "Depends on" line misses
 #   metamelayer check [NAME...]    packages with a library missing (broken by an update)
 #   metamelayer fix                rebuild the broken ones (once each), then check again
+#   metamelayer arch NAME...       before building: what Arch Linux (or the AUR) says NAME needs to
+#                                  run and to build, matched to CRUX's ports, and what's missing
 #   metamelayer key                make your own signing key for Avalon's ports (once)
 #   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
 #   metamelayer flatpak install|remove|update|list|search [APP]
@@ -22,6 +24,8 @@
 # Like NuTyX's CARDS, Metamelayer reads the libraries each program loads (its ELF dynamic
 # section) instead of trusting "Depends on" lines alone: after every build it says when a Pkgfile
 # missed a dependency, and after every upgrade it rebuilds whatever an updated library broke.
+# Before building one of Avalon's own ports, it also asks Arch's package data what the program
+# needs (everything is still compiled here, from source: Arch only supplies the list).
 #
 # Avalon's ports are signed by you: the key lives in /etc/ports/avalon.{pub,sec} on this
 # machine and nowhere else, and pkgmk refuses a port whose files don't match its signature.
@@ -91,6 +95,16 @@ fix() {
 	return 0
 }
 
+arch_check() {   # Avalon's own ports among the names: what Arch says they need (advice; never stops)
+	ours=
+	for n in "$@"; do [ -f "$PORTS/$n/Pkgfile" ] && ours="$ours $n"; done
+	[ -n "$ours" ] || return 0
+	say "What Arch says$ours need"
+	# shellcheck disable=SC2086
+	python3 "$DEPS" arch $ours || echo "    (that's advice: the build goes ahead, and prt-get stops if something's really missing)"
+	return 0
+}
+
 with_check() {   # run a prt-get command, then check what it changed and fix what broke
 	before=$(mktemp)
 	installed > "$before"
@@ -108,11 +122,11 @@ with_check() {   # run a prt-get command, then check what it changed and fix wha
 	return $status
 }
 
-[ $# -ge 1 ] || { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd=$1; shift
 case $cmd in
 	sync)            root sync; sync_ports ;;
-	install|in)      root install; with_check depinst "$@" ;;
+	install|in)      root install; arch_check "$@"; with_check depinst "$@" ;;
 	remove|rm)       root remove; exec prt-get remove "$@" ;;
 	upgrade|up)      root upgrade; sync_ports; with_check sysup ;;
 	search|s)        exec prt-get search "$@" ;;
@@ -125,6 +139,7 @@ case $cmd in
 	                 # shellcheck disable=SC2086
 	                 python3 "$DEPS" explain $broken; exit 1 ;;
 	fix)             root fix; fix ;;
+	arch)            [ $# -gt 0 ] || die "arch: which packages?"; exec python3 "$DEPS" arch "$@" ;;
 	key)             make_key ;;
 	sign)            root sign; sign_ports "$@" ;;
 	flatpak|fp)      verb=${1:-list}; shift || true

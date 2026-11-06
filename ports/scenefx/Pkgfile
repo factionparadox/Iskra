@@ -1,7 +1,7 @@
 # Description: wlroots scene renderer with effects: blur, shadows, rounded corners (Mango draws with it)
 # URL: https://github.com/wlrfx/scenefx
 # Maintainer: Avalon
-# Depends on: wlroots mesa xorg-libpixman libdrm wayland-protocols
+# Depends on: wlroots mesa xorg-libpixman libdrm wayland-protocols glslang lcms2
 
 name=scenefx
 version=0.5

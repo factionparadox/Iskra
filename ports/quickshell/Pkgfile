@@ -1,7 +1,7 @@
 # Description: QtQuick toolkit for desktop shells: Avalon's Garden System is written in it
 # URL: https://quickshell.org
 # Maintainer: Avalon
-# Depends on: qt6-declarative qt6-wayland qt6-svg qt6-shadertools cli11 pipewire linux-pam polkit wayland-protocols libdrm mesa
+# Depends on: qt6-declarative qt6-wayland qt6-svg qt6-shadertools cli11 pipewire linux-pam polkit wayland-protocols libdrm mesa spirv-tools vulkan-headers
 
 name=quickshell
 version=0.3.2
