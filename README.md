@@ -5,9 +5,7 @@ compile into your own, with the **Garden System** on top, a desktop whose look c
 late-1990s PlayStation game *Pixygarden* (an original design in its spirit, not the game's art).
 Its keeper is **Pasha**, a little arctic wolf pup.
 
-The first release is **Avalon 1 "Iskra"**. This repository grew out of Iskra, which was built on
-Slackware; that version is kept on the `slackware` branch and nothing here depends on it.
-
+The first release is **Avalon 1 "Iskra"**.
 ## What it is made of
 
 | Part | What |
