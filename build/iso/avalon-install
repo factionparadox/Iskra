@@ -54,7 +54,10 @@ ROOT_PW=$(pw "root (the administrator; day to day you use sudo)") || quit "Stopp
 
 if ! grep -q " $ROOT " /proc/mounts; then
 	# the disks, without the stick we're running from
-	stick=$(lsblk -no PKNAME "$(awk '$2 == "/media" {print $1; exit}' /proc/mounts)" 2>/dev/null)
+	# (the stick may be mounted as a whole disk, /dev/sda, or a partition of it, /dev/sda1)
+	media_dev=$(awk '$2 == "/media" {print $1; exit}' /proc/mounts)
+	stick=${media_dev##*/}
+	[ -e "/sys/class/block/$stick/partition" ] && stick=$(basename "$(dirname "$(readlink -f "/sys/class/block/$stick")")")
 	menu=()
 	while read -r name size model; do
 		[ "$name" = "$stick" ] && continue
@@ -128,7 +131,9 @@ steps() {
 	mkdir -p $ROOT/var/lib/avalon && echo "$USER_NAME" > $ROOT/var/lib/avalon/firstboot
 	# the first boot logs root in on tty1 by itself, once, to run it (put back afterwards)
 	[ -f $ROOT/etc/inittab.avalon ] || cp $ROOT/etc/inittab $ROOT/etc/inittab.avalon
-	sed -i 's|^\(c1:.*agetty\) \(.*tty1.*\)$|\1 --autologin root \2|' $ROOT/etc/inittab
+	grep -q '^c1:.*--autologin root' $ROOT/etc/inittab ||
+		sed -i 's|^\(c1:.*agetty\) \(.*tty1.*\)$|\1 --autologin root \2|' $ROOT/etc/inittab
+	grep '^c1:' $ROOT/etc/inittab
 	grep -q avalon-firstboot $ROOT/root/.bash_profile 2>/dev/null ||
 		echo '[ "$(tty)" = /dev/tty1 ] && [ -f /var/lib/avalon/firstboot ] && /usr/sbin/avalon-firstboot' \
 			>> $ROOT/root/.bash_profile

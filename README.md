@@ -14,6 +14,7 @@ The first release is **Avalon 1 "Iskra"**.
 | Kernel | Gentoo's prebuilt distribution kernel (7.3), for the Panther Lake graphics, NPU and Wi-Fi 7 |
 | Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key |
 | Escape hatch | Gentoo with **Portage**, in its own root: `sudo metamelayer gentoo` |
+| Flatpak | Only for apps published nowhere else, such as Sober: `metamelayer flatpak install org.vinegarhq.Sober` |
 | Compositor | **MangoWC** (Wayland, dwl-based): tags, a Niri-style scroller, blur via scenefx |
 | Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, Command Mode, notifications, lock, login |
 | Terminal | kitty, which shows Pasha as a picture in fastfetch |

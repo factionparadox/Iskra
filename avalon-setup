@@ -145,6 +145,9 @@ grep '^SERVICES=' /etc/rc.conf
 usermod -aG seat "$USER_NAME"
 getent passwd greeter >/dev/null && usermod -aG video,input,seat greeter
 
+say "Flathub, for apps only published as Flatpaks (Sober, for one)"
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+
 [ -e "$(home)/.local/share/neredy/voices/current.onnx" ] ||
 	su - "$USER_NAME" -c 'neredy voice irina' || echo "    the voice can come later: neredy voice"
 

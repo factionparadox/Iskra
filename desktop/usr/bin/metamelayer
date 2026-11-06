@@ -11,6 +11,8 @@
 #   metamelayer diff               installed packages with newer ports
 #   metamelayer key                make your own signing key for Avalon's ports (once)
 #   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
+#   metamelayer flatpak install|remove|update|list|search [APP]
+#                                  Flathub, for apps only published there (e.g. org.vinegarhq.Sober)
 #   metamelayer gentoo [CMD...]    the escape hatch: Gentoo with Portage in /var/lib/gentoo
 #                                  (a shell there; or: emerge ARGS, sync, run PROGRAM, update,
 #                                  unmount, remove). See docs/escape-hatch.md
@@ -108,7 +110,7 @@ gentoo() {
 	esac
 }
 
-[ $# -ge 1 ] || { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd=$1; shift
 case $cmd in
 	sync)            root sync; sync_ports ;;
@@ -122,5 +124,14 @@ case $cmd in
 	key)             make_key ;;
 	sign)            root sign; sign_ports "$@" ;;
 	gentoo|portage)  gentoo "$@" ;;
+	flatpak|fp)      verb=${1:-list}; shift || true
+	                 case $verb in
+	                   install|in) exec flatpak install -y flathub "$@" ;;
+	                   remove|rm)  exec flatpak uninstall -y "$@" ;;
+	                   update|up)  exec flatpak update -y ;;
+	                   list|ls)    exec flatpak list --app ;;
+	                   search|s)   exec flatpak search "$@" ;;
+	                   *)          die "flatpak: install, remove, update, list or search" ;;
+	                 esac ;;
 	*)               die "unknown command '$cmd' (metamelayer with no arguments lists them)" ;;
 esac
