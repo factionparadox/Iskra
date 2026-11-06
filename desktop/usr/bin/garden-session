@@ -1,13 +1,13 @@
 #!/bin/sh
-# garden-session: what the Garden System starts with Mango (its exec_once). Sound, the night
-# light and the shell itself; each only if it's installed and not already running.
+# garden-session: what the Garden System starts with Mango (its exec_once). Sound runs as
+# systemd user services on Fedora (PipeWire, WirePlumber), so it's only nudged awake here.
 have() { command -v "$1" >/dev/null 2>&1; }
 running() { pgrep -x "$1" >/dev/null 2>&1; }
-# sound: PipeWire, its session manager and PulseAudio emulation
-have pipewire && ! running pipewire && { pipewire & sleep 0.3; }
-have wireplumber && ! running wireplumber && wireplumber &
-have pipewire-pulse && ! running pipewire-pulse && pipewire-pulse &
+# tell systemd and D-Bus about this Wayland session (portals, notifications, Flatpaks)
+systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE 2>/dev/null
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE 2>/dev/null
+systemctl --user start pipewire.socket wireplumber.service pipewire-pulse.socket 2>/dev/null
 # warmer colours after sunset (London)
 have wlsunset && ! running wlsunset && wlsunset -l 51.5 -L -0.1 &
-# the Garden System: wallpaper, bar, launcher, notifications, lock, Command Mode
+# the Garden System: wallpaper, HUD, launcher, notifications, lock, Command Mode
 exec quickshell -c garden

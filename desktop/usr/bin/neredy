@@ -82,7 +82,7 @@ check() {
 		echo "graphics: Intel Vulkan driver present: the model runs on the graphics"
 	else
 		echo "graphics: no Intel Vulkan driver: the model runs on the processor (slower)."
-		echo "          To fix: sudo prt-get depinst vulkan-loader && sudo prt-get update -fr mesa"
+		echo "          To fix: Avalon’s image carries mesa-vulkan-drivers; update it: sudo metamelayer update"
 	fi
 }
 

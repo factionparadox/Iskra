@@ -1,0 +1,45 @@
+# Avalon's packages, from Fedora (and Mango from its COPR). One per line; # starts a comment.
+# Add what you want for good here, then: sudo metamelayer update
+
+# the Garden System
+mangowc
+quickshell
+kitty
+greetd
+cage
+wlsunset
+grim
+slurp
+swappy
+wl-clipboard
+brightnessctl
+fastfetch
+xdg-desktop-portal-wlr
+xdg-desktop-portal-gtk
+upower
+
+# Avalon Control
+python3-gobject
+gtk4
+NetworkManager-tui
+bluez
+bluez-tools
+
+# Neredy: llama.cpp on the Intel graphics (Vulkan), Piper's voice through PipeWire
+vulkan-loader
+mesa-vulkan-drivers
+libgomp
+pipewire-utils
+
+# everyday
+firefox
+mpv
+git
+distrobox
+flatpak
+pciutils
+
+# type: the HUD's own font, and Japanese/Chinese for the element glyphs and Pasha's name plate
+dejavu-sans-fonts
+dejavu-sans-mono-fonts
+google-noto-sans-cjk-fonts

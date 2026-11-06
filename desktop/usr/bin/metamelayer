@@ -1,126 +1,99 @@
-#!/bin/sh
-# metamelayer: Avalon's package manager, over CRUX's own tools (prt-get, pkgmk, pkgutils).
+#!/bin/bash
+# metamelayer: Avalon's package manager. Avalon is an image (Universal Blue, Fedora's bootc
+# images): the system is read-only and replaced whole by each update, and the one before stays
+# a restart away. Metamelayer builds that image here, on this laptop, from Avalon's repository.
 #
-#   metamelayer sync               update the ports: CRUX's collections and Avalon's
-#   metamelayer install NAME...    build and install, with what they depend on
-#   metamelayer remove NAME...     remove
-#   metamelayer upgrade            sync, then rebuild whatever is out of date
-#   metamelayer search WORD        find ports by name
-#   metamelayer info NAME          what a port is and what it needs
-#   metamelayer list               what's installed
-#   metamelayer diff               installed packages with newer ports
-#   metamelayer key                make your own signing key for Avalon's ports (once)
-#   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
-#   metamelayer gentoo [CMD...]    the escape hatch: Gentoo with Portage in /var/lib/gentoo
-#                                  (a shell there; or: emerge ARGS, sync, run PROGRAM, update,
-#                                  unmount, remove). See docs/escape-hatch.md
+#   metamelayer update             fetch Avalon, build the new image here, switch to it, update
+#                                  Flatpaks; the new system starts at the next restart
+#   metamelayer rollback           go back to the previous system (at the next restart)
+#   metamelayer status             which system is running, which is staged, which is behind
+#   metamelayer add PKG...         add Fedora packages on top of the image (rpm-ostree)
+#   metamelayer drop PKG...        remove ones you added
+#   metamelayer search WORD        find Fedora packages
+#   metamelayer flatpak install|remove|update|list|search [APP]   Flathub (e.g. org.vinegarhq.Sober)
+#   metamelayer box [NAME] [CMD]   a mutable Fedora (or other) container, for trying things
+#   metamelayer gentoo [CMD...]    the escape hatch: Gentoo with Portage, in a container
+#                                  (a shell; or: emerge ARGS, export PROGRAM)
 #
-# Avalon's ports are signed by you: the key lives in /etc/ports/avalon.{pub,sec} on this
-# machine and nowhere else, and pkgmk refuses a port whose files don't match its signature.
+# Packages you want for good belong in the image: add them to build/image/packages in Avalon's
+# repository (/var/lib/avalon/repo, or your own fork) and run metamelayer update.
 set -e
-AVALON=${AVALON_SRC:-/usr/ports/avalon}
-PORTS=$AVALON/ports
-KEY=/etc/ports/avalon
+REPO=${AVALON_REPO:-/var/lib/avalon/repo}
+UPSTREAM=${AVALON_UPSTREAM:-https://github.com/factionparadox/Iskra}
+IMAGE=localhost/avalon:latest
 
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;35mmetamelayer:\033[0m %s\n' "$*" >&2; exit 1; }
-root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo metamelayer $*"; }
+root() { [ "$(id -u)" = 0 ] || exec sudo "$0" "$CMD" "$@"; }
 
-sync_ports() {
-	say "CRUX's ports"
-	ports -u
-	if [ -d "$AVALON/.git" ]; then
-		say "Avalon's ports ($AVALON)"
-		git -C "$AVALON" pull --ff-only
-		[ -f "$KEY.sec" ] && sign_ports
-	fi
-	return 0
+booted_image() {   # the image the running system came from
+	bootc status --format=json 2>/dev/null | python3 -c '
+import sys, json
+s = json.load(sys.stdin).get("status", {}).get("booted") or {}
+print(((s.get("image") or {}).get("image") or {}).get("image", ""))' 2>/dev/null
 }
 
-make_key() {
-	root key
-	[ -f "$KEY.sec" ] && { echo "You already have a key: $KEY.pub"; return 0; }
-	install -d -m 755 /etc/ports
-	# signify wants both names bare, in the same folder (keyname.pub and keyname.sec)
-	( cd "$(dirname "$KEY")" && signify -G -n -c "Avalon ports, signed on $(hostname)" \
-		-p "$(basename "$KEY").pub" -s "$(basename "$KEY").sec" )
-	chmod 600 "$KEY.sec"
-	say "Your key: $KEY.pub (the secret half, $KEY.sec, never leaves this machine)"
+update() {
+	say "Avalon's repository ($REPO)"
+	if [ -d "$REPO/.git" ]; then git -C "$REPO" pull --ff-only
+	else mkdir -p "$(dirname "$REPO")"; git clone "$UPSTREAM" "$REPO"; fi
+	git -C "$REPO" log --oneline -1
+
+	say "Building the Avalon image here (Universal Blue's base, then Avalon on top)"
+	podman build --pull=newer -t "$IMAGE" -f "$REPO/Containerfile" "$REPO"
+
+	say "Switching to it (the new system starts at the next restart; the old one stays one restart away)"
+	if [ "$(booted_image)" = "$IMAGE" ]; then bootc upgrade
+	else bootc switch --transport containers-storage "$IMAGE"; fi
+
+	if command -v flatpak >/dev/null; then say "Flatpaks"; flatpak update -y --noninteractive || true; fi
+	podman image prune -f >/dev/null 2>&1 || true
+	say "Done. Restart when you're ready:  systemctl reboot"
 }
 
-sign_ports() {
-	[ -f "$KEY.sec" ] || die "no key yet: sudo metamelayer key"
-	if [ $# -eq 0 ]; then set -- $(ls "$PORTS"); fi
-	for p in "$@"; do
-		[ -f "$PORTS/$p/Pkgfile" ] || continue
-		( cd "$PORTS/$p" && pkgmk -d -us -sk "$KEY.sec" >/dev/null ) && echo "    signed $p" ||
-			echo "    could not sign $p (its sources didn't download?)"
-	done
+flat() {
+	local verb=${1:-list}; shift || true
+	case $verb in
+		install|in) flatpak install -y flathub "$@" ;;
+		remove|rm)  flatpak uninstall -y "$@" ;;
+		update|up)  flatpak update -y ;;
+		list|ls)    flatpak list --app ;;
+		search|s)   flatpak search "$@" ;;
+		*)          die "flatpak: install, remove, update, list or search" ;;
+	esac
 }
 
- # Gentoo lives in its own root, /var/lib/gentoo, so Portage and CRUX never overwrite each
-# other's files. It shares /home, /run and the devices, so its programs can open windows here.
-G=/var/lib/gentoo
 gentoo() {
-	root gentoo
-	[ -x $G/usr/bin/emerge ] || die "no Gentoo in $G (the Avalon disc puts it there)"
-	gentoo_unmount() {   # deepest first; /home is shared, so it must be off before any deleting
-		for m in $(awk -v g="$G/" 'index($2, g) == 1 {print $2}' /proc/mounts | sort -r); do
-			umount -l "$m"
-		done
-		! grep -q " $G/" /proc/mounts
-	}
-	case ${1:-} in
-		unmount) gentoo_unmount && say "Gentoo is unmounted"; return ;;
-		remove)
-			gentoo_unmount || die "something in $G is still mounted; reboot, then run this again"
-			printf 'Delete Gentoo (%s, %s)? Your home is not touched. Type yes: ' "$G" "$(du -sh $G | cut -f1)"
-			read -r ok; [ "$ok" = yes ] || die "kept"
-			rm -rf --one-file-system "$G" && say "Gentoo is gone"; return ;;
-	esac
-	grep -q " $G/proc " /proc/mounts || {
-		mount -t proc proc $G/proc
-		mount --rbind /sys $G/sys && mount --make-rslave $G/sys
-		mount --rbind /dev $G/dev && mount --make-rslave $G/dev
-		mount --bind /run $G/run
-		mount --bind /home $G/home
-		mount -t tmpfs tmpfs $G/tmp
-		[ -d /tmp/.X11-unix ] && mkdir -p $G/tmp/.X11-unix && mount --bind /tmp/.X11-unix $G/tmp/.X11-unix  || true
-	}
-	cp -L /etc/resolv.conf $G/etc/resolv.conf
-	u=${SUDO_USER:-}
-	if [ -n "$u" ] && ! grep -q "^$u:" $G/etc/passwd; then   # you, inside Gentoo too
-		grep "^$u:" /etc/passwd >> $G/etc/passwd
-		grep "^$u:" /etc/shadow >> $G/etc/shadow
-		g=$(id -gn "$u"); grep -q "^$g:" $G/etc/group || grep "^$g:" /etc/group >> $G/etc/group
+	# Portage, in a distrobox: Gentoo's own userland in a container that shares your home,
+	# so it can never touch Avalon's files. emerge uses Gentoo's prebuilt packages first.
+	command -v distrobox >/dev/null || die "distrobox isn't installed"
+	if ! distrobox list 2>/dev/null | grep -q ' gentoo '; then
+		say "Making the Gentoo box (once): Gentoo's stage3, with Portage"
+		distrobox create -Y --name gentoo --image docker.io/gentoo/stage3:latest \
+			--init-hooks 'grep -q getbinpkg /etc/portage/make.conf || echo FEATURES=\"\${FEATURES} getbinpkg\" >> /etc/portage/make.conf; [ -d /var/db/repos/gentoo/metadata ] || emerge-webrsync -q'
 	fi
-	in_g() { chroot $G /usr/bin/env -i HOME=/root TERM="${TERM:-linux}" PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 	case ${1:-} in
-		"")     say "Gentoo (Portage). 'exit' to come back to Avalon"; in_g /bin/bash -l ;;
-		emerge) shift; in_g emerge --getbinpkg "$@" ;;
-		sync)   in_g emerge --sync || in_g emerge-webrsync ;;
-		update) in_g emerge --sync; in_g emerge --getbinpkg -uDN @world ;;
-		run)    shift; [ -n "$u" ] || die "run it with sudo, as yourself"
-			rt=/run/user/$(id -u "$u")
-			wl=$(ls "$rt" 2>/dev/null | grep -m1 '^wayland-[0-9]*$' || echo wayland-0)
-			in_g su - "$u" -c "export WAYLAND_DISPLAY=$wl XDG_RUNTIME_DIR=$rt; $*" ;;
-		*)      in_g "$@" ;;
+		"")     distrobox enter gentoo ;;
+		emerge) shift; distrobox enter gentoo -- sudo emerge --getbinpkg "$@" ;;
+		export) shift; distrobox enter gentoo -- distrobox-export --app "$1" ;;
+		*)      distrobox enter gentoo -- "$@" ;;
 	esac
 }
 
-[ $# -ge 1 ] || { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-cmd=$1; shift
-case $cmd in
-	sync)            root sync; sync_ports ;;
-	install|in)      root install; exec prt-get depinst "$@" ;;
-	remove|rm)       root remove; exec prt-get remove "$@" ;;
-	upgrade|up)      root upgrade; sync_ports; exec prt-get sysup ;;
-	search|s)        exec prt-get search "$@" ;;
-	info)            exec prt-get info "$@" ;;
-	list|ls)         exec prt-get listinst ;;
-	diff)            exec prt-get diff ;;
-	key)             make_key ;;
-	sign)            root sign; sign_ports "$@" ;;
-	gentoo|portage)  gentoo "$@" ;;
-	*)               die "unknown command '$cmd' (metamelayer with no arguments lists them)" ;;
+CMD=${1:-}; shift || true
+case $CMD in
+	update|up|upgrade) root "$@"; update ;;
+	rollback)          root "$@"; bootc rollback; say "The previous system starts at the next restart" ;;
+	status|st)         bootc status 2>/dev/null || rpm-ostree status ;;
+	add)               root "$@"; [ $# -gt 0 ] || die "add what?"; rpm-ostree install --idempotent "$@"
+	                   say "Added; they arrive at the next restart (or now: sudo rpm-ostree apply-live)" ;;
+	drop)              root "$@"; [ $# -gt 0 ] || die "drop what?"; rpm-ostree uninstall "$@" ;;
+	search|s)          [ $# -gt 0 ] || die "search for what?"; dnf search "$@" ;;
+	flatpak|fp)        flat "$@" ;;
+	box)               name=${1:-fedora}; shift || true
+	                   distrobox list 2>/dev/null | grep -q " $name " || distrobox create -Y --name "$name"
+	                   distrobox enter "$name" ${1:+-- "$@"} ;;
+	gentoo|portage)    gentoo "$@" ;;
+	""|help|-h)        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+	*)                 die "unknown command '$CMD' (metamelayer help lists them)" ;;
 esac

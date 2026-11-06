@@ -1,0 +1,11 @@
+[Unit]
+Description=Avalon: the battery charge limit chosen in Avalon Control
+ConditionPathExists=/etc/avalon/charge-limit
+After=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/bin/avalon-power charge-limit "$(cat /etc/avalon/charge-limit)"'
+
+[Install]
+WantedBy=multi-user.target

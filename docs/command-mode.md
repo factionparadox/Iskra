@@ -28,7 +28,9 @@ A short start works when only one command fits it: `vol 40` is `volume 40`.
 | `ask QUESTION` | open Neredy and ask her |
 | `say ТЕКСТ` | Neredy reads Russian text aloud |
 | `settings [PAGE]` | Avalon Control, at a page |
-| `update` | `sudo metamelayer upgrade`, in a terminal |
+| `update` | `sudo metamelayer update`, in a terminal: the newest Avalon, at the next restart |
+| `rollback` | `sudo metamelayer rollback`: the previous Avalon, at the next restart |
+| `flatpak APP` | install a Flatpak from Flathub, e.g. `flatpak org.vinegarhq.Sober` |
 | `lock`, `suspend`, `restart`, `off` | the session |
 | `shot` | screenshot of an area, to edit and save |
 | `reload` | restart the Garden System |

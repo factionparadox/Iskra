@@ -1,0 +1,23 @@
+#!/bin/sh
+# avalon-power: the session's power actions, and the battery charge limit.
+#   avalon-power suspend|reboot|off      through systemd-logind: no password needed
+#   avalon-power charge-limit N          stop charging at N% (50-100); needs root (Avalon Control
+#                                        runs it with sudo, which /etc/sudoers.d/avalon allows),
+#                                        kept in /etc/avalon/charge-limit, applied at every boot
+#                                        by avalon-charge-limit.service
+case $1 in
+  suspend) exec systemctl suspend ;;
+  reboot)  exec systemctl reboot ;;
+  off)     exec systemctl poweroff ;;
+  charge-limit)
+    n=$2
+    case $n in ''|*[!0-9]*) echo "charge-limit needs a number" >&2; exit 2 ;; esac
+    [ "$n" -ge 50 ] && [ "$n" -le 100 ] || { echo "charge-limit: 50-100" >&2; exit 2; }
+    found=
+    for b in /sys/class/power_supply/BAT*/charge_control_end_threshold; do
+      [ -w "$b" ] && echo "$n" > "$b" && found=1
+    done
+    [ -n "$found" ] || { echo "this battery has no charge limit" >&2; exit 1; }
+    mkdir -p /etc/avalon && echo "$n" > /etc/avalon/charge-limit ;;
+  *) echo "usage: avalon-power suspend|reboot|off|charge-limit N" >&2; exit 2 ;;
+esac

@@ -7,7 +7,7 @@ import qs.components
 // Command Mode (Super+;): run the Garden by typing, in the game's dialogue box.
 //   visit 3 · visit soyuz · send 2 · open web · run CMD · term [CMD] · volume 40 · brightness 60
 //   wifi on · bluetooth off · night on · ask … (Neredy) · say … (in Russian) · settings [page]
-//   update · lock · suspend · restart · off · shot · reload · help
+//   update · rollback · flatpak APP · lock · suspend · restart · off · shot · reload · help
 // Type, and the commands that fit are listed: Up/Down choose, Tab fills in, Enter runs.
 // With the line empty, Up/Down go back through what you ran before. Escape closes.
 PanelWindow {
@@ -97,8 +97,13 @@ PanelWindow {
 			sh(["neredy", "say", a.join(" ")]) } },
 		{ name: "settings", args: "[page]", what: "Avalon Control (appearance, display, sound, network…)", run: a =>
 			sh(["avalon-control"].concat(a.slice(0, 1))) },
-		{ name: "update", args: "", what: "update Avalon (metamelayer upgrade), in a terminal", run: a =>
-			sh(["kitty", "--hold", "sh", "-c", "sudo metamelayer upgrade"]) },
+		{ name: "update", args: "", what: "build the newest Avalon and switch to it at the next restart", run: a =>
+			sh(["kitty", "--hold", "sudo", "metamelayer", "update"]) },
+		{ name: "rollback", args: "", what: "back to the previous Avalon, at the next restart", run: a =>
+			sh(["kitty", "--hold", "sudo", "metamelayer", "rollback"]) },
+		{ name: "flatpak", args: "an app, e.g. org.vinegarhq.Sober", what: "install from Flathub", run: a => {
+			if (!a.length) return tell("which Flatpak? e.g. org.vinegarhq.Sober", true)
+			sh(["kitty", "--hold", "metamelayer", "flatpak", "install", a[0]]) } },
 		{ name: "lock", args: "", what: "lock the screen", run: a => { if (lock) lock.lock() } },
 		{ name: "suspend", args: "", what: "sleep", run: a => sh(["avalon", "power", "suspend"]) },
 		{ name: "restart", args: "", what: "restart the laptop", run: a => sh(["avalon", "power", "reboot"]) },

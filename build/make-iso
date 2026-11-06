@@ -1,173 +1,36 @@
 #!/bin/sh
-# make-iso: make the Avalon install disc on your own machine (Arch, or Arch on WSL). As root:
-#
-#     sudo build/make-iso                     # (from this repo)
-#     sudo NEREDY_MODEL=small build/make-iso  # also put Neredy's small model (~2.5 GB) on the disc
-#
-# Nothing is compiled here: it downloads and checks the official CRUX 3.8 ISO, Gentoo's
-# prebuilt kernel, current firmware, a Gentoo base system with Portage and Neredy's voice, packs
-# the kernel and firmware as CRUX packages, and adds them, Avalon's ports and the installer to
-# the ISO: avalon-1-iskra.iso, here. Avalon itself is compiled on the laptop, on its first boot.
-# Downloads are kept in $WORK, so running it again only fetches what's new.
+# make-iso: an installer USB image for Avalon, from the image make-image built.
+#     sudo build/make-image && sudo build/make-iso
+# It uses Fedora's own installer (Anaconda), graphical, with the language, keyboard and time
+# zone set for you (British English, UK, London): you choose the disk and your user, it installs
+# Avalon, you restart. Result: avalon-1-iskra.iso here. Write it with Rufus (DD mode) or dd.
 set -eu
-
-REPO=$(cd "$(dirname "$0")/.." && pwd)
-WORK=${WORK:-/var/tmp/avalon-iso}
-OUT=${OUT:-$REPO/avalon-1-iskra.iso}
-CRUX=${CRUX_MIRROR:-https://ftp.spline.inf.fu-berlin.de/pub/crux/crux-3.8/iso}
-GENTOO=https://distfiles.gentoo.org
-# the firmware version CRUX's own opt/linux-firmware port has, so prt-get sees it as current
-FIRMWARE=20261019
-PV=https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/irina/medium
-
-say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-die() { printf '\n\033[1;35mmake-iso: %s\033[0m\n' "$*" >&2; exit 1; }
-get() { [ -s "$2" ] && [ ! -f "$2.part" ] && return 0; curl -fL -C - --retry 5 -o "$2.part" "$1" && mv "$2.part" "$2"; }
-fresh() { rm -f "$2"; curl -fsSL --retry 5 -o "$2" "$1"; }   # small files: always the latest
-
-[ "$(id -u)" = 0 ] || die "run it as root: sudo $0"
-mkdir -p "$WORK/dl" "$WORK/pkgs"
-# the build system an earlier version of this script made is no longer used: remove it, but
-# only if nothing is still mounted inside it
-if [ -d "$WORK/root" ]; then
-	if grep -q " $WORK/root/" /proc/mounts; then
-		die "$WORK/root (from an earlier version) still has things mounted in it: reboot WSL (wsl --shutdown), then run this again"
-	fi
-	say "Removing the old build system ($WORK/root), no longer needed"
-	rm -rf "$WORK/root" "$WORK/crux" "$WORK/overlay"
-fi
-free=$(df -Pk "$WORK" | awk 'NR == 2 {print int($4 / 1048576)}')
-[ "$free" -ge 15 ] || die "$WORK has ${free} GB free; about 15 GB is needed (WORK=/somewhere/else to move it)"
-
-say "Tools on this machine"
-command -v pacman >/dev/null && pacman -S --needed --noconfirm libisoburn libarchive git curl make zstd xz binutils
-for t in xorriso bsdtar git curl make zstd xz objcopy sha256sum sha512sum md5sum bash; do
-	command -v $t >/dev/null || die "missing: $t"
-done
-cd "$WORK/dl"
-
-say "CRUX 3.8"
-fresh "$CRUX/crux-3.8.sha256" crux-3.8.sha256
-get "$CRUX/crux-3.8.iso" crux-3.8.iso
-sha256sum -c crux-3.8.sha256
-
-say "Gentoo's prebuilt kernel"
-eval "$(grep -E '^(version|release)=' "$REPO/ports/gentoo-kernel-bin/Pkgfile")"
-gk=gentoo-kernel-$version-1.amd64.gpkg.tar
-get "$GENTOO/pub/proj/dist-kernel/binpkg/amd64/${version%.*}/$gk" "$gk"
-fresh "https://gitweb.gentoo.org/repo/gentoo.git/plain/sys-kernel/gentoo-kernel-bin/Manifest" kernel.Manifest
-want=$(awk -v f="$gk" '$1 == "DIST" && $2 == f {for (i = 3; i < NF; i++) if ($i == "SHA512") print $(i + 1)}' kernel.Manifest)
-[ -n "$want" ] || die "Gentoo's Manifest doesn't list $gk (has the port's version gone from Gentoo?)"
-echo "$want  $gk" | sha512sum -c
-kpkg="$WORK/pkgs/gentoo-kernel-bin#$version-$release.pkg.tar.xz"
-
-say "Firmware ($FIRMWARE)"
-fw=linux-firmware-$FIRMWARE.tar.xz
-get "https://cdn.kernel.org/pub/linux/kernel/firmware/$fw" "$fw"
-fresh https://cdn.kernel.org/pub/linux/kernel/firmware/sha256sums.asc firmware.sha256
-grep " $fw\$" firmware.sha256 | sha256sum -c
-fpkg="$WORK/pkgs/linux-firmware#$FIRMWARE-1.pkg.tar.xz"
-
-say "Gentoo, with Portage (the escape hatch)"
-fresh "$GENTOO/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" stage3.txt
-s3=$(grep -m1 '^[0-9].*stage3-amd64-openrc-.*\.tar\.xz' stage3.txt | cut -d' ' -f1)
-[ -n "$s3" ] || die "can't find the latest stage3 in stage3.txt"
-get "$GENTOO/releases/amd64/autobuilds/$s3" "${s3##*/}"
-fresh "$GENTOO/releases/amd64/autobuilds/$s3.sha256" stage3.sha256
-grep " ${s3##*/}\$" stage3.sha256 | sha256sum -c
-ls stage3-amd64-openrc-*.tar.xz | grep -v "^${s3##*/}\$" | xargs -r rm -f
-fresh "$GENTOO/snapshots/gentoo-latest.tar.xz.md5sum" portage.md5
-rm -f gentoo-latest.tar.xz; get "$GENTOO/snapshots/gentoo-latest.tar.xz" gentoo-latest.tar.xz
-md5sum -c portage.md5
-
-say "Neredy's voice (Irina)"
-for x in ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json; do get "$PV/$x" "$x"; done
-if [ "${NEREDY_MODEL:-}" = small ]; then
-	say "Neredy's small model (Qwen3 4B)"
-	get https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf neredy-model.gguf
-fi
-
-# a CRUX package is a tar of the files, named name#version-release, owned by root
-pack() {
-	( cd "$1" && bsdtar --uid 0 --gid 0 --uname root --gname root --options xz:threads=0 \
-		-cJf "$2.part" $(ls -A) ) && mv "$2.part" "$2"
-}
-
-if [ ! -f "$kpkg" ]; then
-	say "Packing the kernel for CRUX (the gentoo-kernel-bin port's own build step)"
-	rm -rf "$WORK/k"; mkdir -p "$WORK/k/src" "$WORK/k/pkg"
-	tar -xf "$gk" -C "$WORK/k/src"
-	SRC=$WORK/k/src PKG=$WORK/k/pkg PF=$REPO/ports/gentoo-kernel-bin/Pkgfile bash -ec \
-		'cd "$SRC"; . "$PF"; build'
-	pack "$WORK/k/pkg" "$kpkg"
-	rm -rf "$WORK/k"
-fi
-ls -lh "$kpkg"
-
-if [ ! -f "$fpkg" ]; then
-	say "Packing the firmware for CRUX (compressed with zstd, which the kernel reads)"
-	rm -rf "$WORK/f"; mkdir -p "$WORK/f/pkg"
-	tar -xf "$fw" -C "$WORK/f"
-	make -C "$WORK/f/linux-firmware-$FIRMWARE" DESTDIR="$WORK/f/pkg" FIRMWAREDIR=/lib/firmware install-zst
-	pack "$WORK/f/pkg" "$fpkg"
-	rm -rf "$WORK/f"
-fi
-ls -lh "$fpkg"
-
-say "Putting the disc together"
-OV=$WORK/overlay
-rm -rf "$OV"; mkdir -p "$OV/avalon/packages" "$OV/avalon/voices" "$OV/avalon/gentoo"
-ln "$kpkg" "$fpkg" "$OV/avalon/packages/" 2>/dev/null || cp "$kpkg" "$fpkg" "$OV/avalon/packages/"
-git -c safe.directory='*' clone -q "$REPO" "$OV/avalon/repo"
-git -C "$OV/avalon/repo" remote set-url origin https://github.com/factionparadox/Iskra
-git -C "$OV/avalon/repo" log --oneline -1
-cp "$REPO/build/iso/avalon-install" "$OV/avalon-install"
-cp ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json "$OV/avalon/voices/"
-cp "${s3##*/}" gentoo-latest.tar.xz "$OV/avalon/gentoo/"
-[ "${NEREDY_MODEL:-}" = small ] && cp neredy-model.gguf "$OV/avalon/"
-
-# the boot menu says Avalon
-rm -f grub.cfg
-xorriso -osirrox on -indev crux-3.8.iso -extract /boot/grub/grub.cfg grub.cfg 2>/dev/null
-chmod u+w grub.cfg
-sed -i 's|Install/Upgrade CRUX 3.8 (UEFI mode)|Install Avalon 1 (Iskra)|g; s|^set timeout=99|set timeout=15|' grub.cfg
-# and it looks like the Garden System: the theme goes in once the graphical terminal is on
-awk '{print} /^    terminal_output gfxterm$/ {
-	t = "$prefix/themes/avalon"
-	print "    insmod png"; print "    loadfont " t "/menu.pf2"; print "    loadfont " t "/hint.pf2"
-	print "    set theme=" t "/theme.txt"
-}' grub.cfg > grub.cfg.new && mv grub.cfg.new grub.cfg
-grep -n 'theme\|loadfont\|timeout\|menuentry' grub.cfg
-
-say "The stick's live system: the installer starts by itself, in large type"
-rfs=$(xorriso -indev crux-3.8.iso -find / -name rootfs.tar.xz 2>/dev/null | tr -d "'" | head -1)
-[ -n "$rfs" ] || die "can't find rootfs.tar.xz on the CRUX ISO"
-rm -rf "$WORK/rootfs" rootfs.orig.tar.xz rootfs.tar.xz; mkdir -p "$WORK/rootfs"
-xorriso -osirrox on -indev crux-3.8.iso -extract "$rfs" rootfs.orig.tar.xz 2>/dev/null
-bsdtar -xpf rootfs.orig.tar.xz -C "$WORK/rootfs" --numeric-owner
-bp="$WORK/rootfs/root/.bash_profile"
-[ -f "$bp" ] || printf '[ -f ~/.profile ] && . ~/.profile\n' > "$bp"
-cat >> "$bp" <<'PROFILE'
-# Avalon: large type, and the installer starts by itself on the first console
-setfont latarcyrheb-sun32 2>/dev/null
-if [ "$(tty)" = /dev/tty1 ] && [ ! -f /tmp/.avalon-started ] && [ -x /media/avalon-install ]; then
-	touch /tmp/.avalon-started
-	/media/avalon-install
-fi
-PROFILE
-# packed as CRUX packs it (GNU tar, one xz stream), for the stick's start-up to unpack
-(cd "$WORK/rootfs" && XZ_OPT=-T1 tar --numeric-owner -cJf "$WORK/dl/rootfs.tar.xz" .)
-rm -rf "$WORK/rootfs" rootfs.orig.tar.xz
-ls -lh rootfs.tar.xz
-
-say "Writing $OUT"
-rm -f "$OUT"
-xorriso -indev crux-3.8.iso -outdev "$OUT" -compliance iso_9660_level=3 \
-	-map "$OV/avalon" /avalon -map "$OV/avalon-install" /avalon-install \
-	-map grub.cfg /boot/grub/grub.cfg -map rootfs.tar.xz "$rfs" -map "$REPO/desktop/usr/share/avalon/grub-theme" /boot/grub/themes/avalon -map "$REPO/README.md" /AVALON-README.txt -map "$REPO/docs" /avalon-docs \
-	-boot_image any replay
-[ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:" "$OUT"
-(cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
-ls -lh "$OUT"
-
-say "Done. Write it to a USB stick (Rufus, or dd), boot it, and follow 'On the laptop' in README.md"
+cd "$(dirname "$0")/.."
+[ "$(id -u)" = 0 ] || { echo "make-iso: run it as root: sudo $0" >&2; exit 1; }
+podman image exists localhost/avalon:latest || { echo "make-iso: build the image first: sudo build/make-image" >&2; exit 1; }
+work=$(mktemp -d /var/tmp/avalon-iso.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+cat > "$work/config.toml" <<'TOML'
+[customizations.installer.kickstart]
+contents = """
+graphical
+lang en_GB.UTF-8
+keyboard gb
+timezone Europe/London
+"""
+TOML
+mkdir -p "$work/output"
+podman run --rm -it --privileged --pull=newer \
+	--security-opt label=type:unconfined_t \
+	-v "$work/config.toml":/config.toml:ro \
+	-v "$work/output":/output \
+	-v /var/lib/containers/storage:/var/lib/containers/storage \
+	quay.io/centos-bootc/bootc-image-builder:latest \
+	--type anaconda-iso --rootfs btrfs --use-librepo=True \
+	localhost/avalon:latest
+iso=$(find "$work/output" -name '*.iso' | head -1)
+[ -n "$iso" ] || { echo "make-iso: no ISO came out" >&2; exit 1; }
+mv "$iso" avalon-1-iskra.iso
+[ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:" avalon-1-iskra.iso
+sha256sum avalon-1-iskra.iso > avalon-1-iskra.iso.sha256
+ls -lh avalon-1-iskra.iso
