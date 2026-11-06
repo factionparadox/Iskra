@@ -1,11 +1,11 @@
 #!/bin/bash
 # avalon-install: put Avalon on the laptop's disk from this disc. Runs in the CRUX live system.
 #
-# Before it: make your partitions and mount them under /mnt, the EFI partition included, e.g.
-#     mkfs.fat -F32 /dev/nvme0n1p1   mkfs.ext4 /dev/nvme0n1p2
-#     mount /dev/nvme0n1p2 /mnt      mkdir -p /mnt/boot/efi   mount /dev/nvme0n1p1 /mnt/boot/efi
-# Then:
 #     /media/avalon-install YOURNAME
+#
+# With nothing mounted on /mnt it asks which disk to use, erases it (after you type "yes"), and
+# makes a 1 GB EFI partition and an ext4 one for the rest. To lay the disk out yourself instead,
+# partition and mount it under /mnt first (the EFI partition at /mnt/boot/efi), then run it.
 #
 # Offline, from the disc: CRUX's core, Gentoo's prebuilt kernel (7.3) and current firmware,
 # what the first boot needs to get online and build, a Gentoo system with Portage (the escape
@@ -23,7 +23,29 @@ die()  { printf '\n\033[1;35mavalon-install: %s\033[0m\n' "$*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "run it as root"
 [ -n "$USER_NAME" ] || die "say whose laptop it is: $0 YOURNAME"
 [ -d "$MEDIA/avalon/repo" ] || die "this isn't an Avalon disc (no $MEDIA/avalon)"
-grep -q " $ROOT " /proc/mounts || die "nothing is mounted on $ROOT: mount your root partition there first"
+if ! grep -q " $ROOT " /proc/mounts; then
+	say "The disk (everything on it will be erased)"
+	lsblk -d -e 7,11 -o NAME,SIZE,MODEL
+	read -r -p "    Disk to install Avalon on (e.g. nvme0n1), or Enter to stop: " disk
+	[ -n "$disk" ] || die "stopped; nothing was touched"
+	disk=/dev/${disk#/dev/}
+	[ -b "$disk" ] || die "there's no disk called $disk"
+	grep -q "^$disk" /proc/mounts && die "$disk is in use (is it the USB stick?)"
+	read -r -p "    Erase ALL of $disk ($(lsblk -dno SIZE "$disk") $(lsblk -dno MODEL "$disk"))? Type yes: " ok
+	[ "$ok" = yes ] || die "stopped; nothing was touched"
+	case $disk in *[0-9]) part=${disk}p ;; *) part=$disk ;; esac
+	wipefs -qa "$disk"
+	printf 'label: gpt\nsize=1GiB, type=U, name="EFI"\ntype=L, name="Avalon"\n' | sfdisk -q "$disk"
+	partx -u "$disk" 2>/dev/null || blockdev --rereadpt "$disk" 2>/dev/null || true
+	i=0; while [ ! -b "${part}2" ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	[ -b "${part}2" ] || die "the new partitions didn't appear (${part}1, ${part}2)"
+	mkfs.fat -F32 -n EFI "${part}1"
+	mkfs.ext4 -q -F -L avalon "${part}2"
+	mount "${part}2" $ROOT
+	mkdir -p $ROOT/boot/efi
+	mount "${part}1" $ROOT/boot/efi
+	lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT "$disk"
+fi
 ESP=$(awk -v r="$ROOT" '$2 ~ "^"r"/" && $3 == "vfat" {print $2; exit}' /proc/mounts)
 [ -n "$ESP" ] || die "the EFI partition isn't mounted under $ROOT (e.g. $ROOT/boot/efi)"
 

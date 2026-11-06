@@ -136,7 +136,7 @@ say "Writing $OUT"
 rm -f "$OUT"
 xorriso -indev crux-3.8.iso -outdev "$OUT" -compliance iso_9660_level=3 \
 	-map "$OV/avalon" /avalon -map "$OV/avalon-install" /avalon-install \
-	-map grub.cfg /boot/grub/grub.cfg \
+	-map grub.cfg /boot/grub/grub.cfg -map "$REPO/README.md" /AVALON-README.txt \
 	-boot_image any replay
 [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:" "$OUT"
 (cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")

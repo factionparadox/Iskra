@@ -5,21 +5,23 @@ compile into your own, with the **Garden System** on top, a desktop whose look c
 late-1990s PlayStation game *Pixygarden* (an original design in its spirit, not the game's art).
 Its keeper is **Pasha**, a little arctic wolf pup.
 
-The first release is **Avalon 1 "Iskra"**. This repository grew out of Iskra (Slackware, then CRUX
-before that); the Slackware version is kept on the `slackware` branch.
+The first release is **Avalon 1 "Iskra"**. This repository grew out of Iskra, which was built on
+Slackware; that version is kept on the `slackware` branch and nothing here depends on it.
 
 ## What it is made of
 
 | Part | What |
 |---|---|
 | Base | CRUX 3.8: pkgutils, ports, BSD-style init, no systemd |
-| Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils (to come) |
+| Kernel | Gentoo's prebuilt distribution kernel (7.3), for the Panther Lake graphics, NPU and Wi-Fi 7 |
+| Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key |
+| Escape hatch | Gentoo with **Portage**, in its own root: `sudo metamelayer gentoo` |
 | Compositor | **MangoWC** (Wayland, dwl-based): tags, a Niri-style scroller, blur via scenefx |
-| Shell | **The Garden System**, written in Quickshell: bar, launcher, notifications, lock, login, Command Mode (to come) |
+| Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, notifications, lock, login |
 | Terminal | kitty, which shows Pasha as a picture in fastfetch |
 | Login | greetd, with the Garden System's own login screen (in cage) |
-| Assistant | **Neredy**, local AI on llama.cpp; it also hosts the Russian tutor (to come) |
-| Settings | **Avalon Control**, GTK4 (to come) |
+| Assistant | **Neredy**, local AI on llama.cpp (Vulkan), with a Russian tutor mode and a Russian voice (Piper) |
+| Settings | **Avalon Control**, GTK4 (to come); Command Mode (to come) |
 
 No Flatpak: everything is a native package.
 
@@ -27,7 +29,9 @@ No Flatpak: everything is a native package.
 
 | Folder | What |
 |---|---|
-| `ports/` | Avalon's CRUX ports collection: what CRUX doesn't have (Mango, scenefx, Quickshell, kitty, cage, cJSON, CLI11) |
+| `ports/` | Avalon's CRUX ports: what CRUX doesn't have (Mango, scenefx, Quickshell, kitty, cage, cJSON, CLI11, llama.cpp, Piper, Gentoo's kernel) and `avalon`, which pulls everything in |
+| `build/make-iso`, `build/iso/` | The install disc: how it's made, its installer and the first-boot build |
+| `avalon-setup` | Turns CRUX into Avalon (the first boot runs it; it works on any CRUX 3.8 too) |
 | `desktop/` | The Garden System's settings and tools, as they're installed (`etc/`, `usr/`) |
 | `desktop/etc/xdg/quickshell/garden/` | The Garden System shell: bar, launcher, notifications, lock, power menu, key reference, Neredy |
 | `desktop/usr/share/garden/greeter.qml` | The login screen (greetd) |
@@ -50,19 +54,16 @@ current firmware, a Gentoo base system with Portage and Neredy's Russian voice, 
 ### On the laptop
 
 1. Write the ISO to a USB stick, boot it, log in as root.
-2. Partition and mount (the EFI partition too), for example:
-
-       mkfs.fat -F32 /dev/nvme0n1p1 && mkfs.ext4 /dev/nvme0n1p2
-       mount /dev/nvme0n1p2 /mnt && mkdir -p /mnt/boot/efi && mount /dev/nvme0n1p1 /mnt/boot/efi
-
-3. Install (offline, from the disc):
+2. Install (offline, from the disc):
 
        /media/avalon-install YOURNAME
 
-   It asks for your Wi-Fi (for the first boot), then installs CRUX's core, the Gentoo kernel and
-   firmware, Gentoo with Portage, Avalon's ports, `/etc/fstab`, your user (it asks for your and
-   root's passwords) and GRUB.
-4. `reboot`. **The first boot builds Avalon on the laptop**: it gets online, brings CRUX's ports
+   It asks which disk to use and erases it once you type `yes` (a 1 GB EFI partition, ext4 for
+   the rest; to lay it out yourself, mount it under `/mnt` first, EFI at `/mnt/boot/efi`). It asks
+   for your Wi-Fi (for the first boot), then installs CRUX's core, the Gentoo kernel and firmware,
+   Gentoo with Portage, Avalon's ports, `/etc/fstab`, your user (it asks for your and root's
+   passwords) and GRUB.
+3. `reboot`. **The first boot builds Avalon on the laptop**: it gets online, brings CRUX's ports
    up to date, installs the disc's packages that are still current and compiles the rest
    (Mango, Quickshell, greetd, PipeWire...), showing every build, then reboots into the Garden
    System. If a build fails, log in as root, fix it, and run `avalon-firstboot`: it carries on.
@@ -82,5 +83,9 @@ Gentoo lives in its own root, `/var/lib/gentoo`, so Portage and CRUX never overw
 
 ## Status
 
-The ports are first drafts, not yet built: they get tested on the laptop, on a fresh CRUX install.
-Keys are in `desktop/etc/mango/config.conf` (Super+/ will show them once the shell is in).
+The install disc builds (`build/make-iso`, 3.1 GB). Nothing has run on the laptop yet: the
+installer, the first-boot build, the ports and the Garden System get their first real test there.
+Keys are in `desktop/etc/mango/config.conf`; Super+/ shows them on the desktop.
+
+CRUX's own handbook is on the disc as `/media/crux/handbook.txt`; this file is there as
+`/media/AVALON-README.txt`.
