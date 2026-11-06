@@ -78,11 +78,15 @@ print(" ".join(r for r in runs if len(r.split()) > 1 or r[-1:] in "!?."))')
 check() {
 	[ -e "$MODEL" ] && echo "model:    $(readlink "$MODEL")" || echo "model:    none yet (neredy setup small|large)"
 	[ -e "$VOICE" ] && echo "voice:    $(readlink "$VOICE")" || echo "voice:    none yet (neredy voice)"
-	if ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1; then
+	icd=
+	for d in $(echo "${XDG_DATA_DIRS:-/run/current-system/profile/share}" | tr ':' ' '); do
+		ls "$d"/vulkan/icd.d/intel*.json >/dev/null 2>&1 && icd=1
+	done
+	if [ -n "$icd" ]; then
 		echo "graphics: Intel Vulkan driver present: the model runs on the graphics"
 	else
-		echo "graphics: no Intel Vulkan driver: the model runs on the processor (slower)."
-		echo "          To fix: sudo prt-get depinst vulkan-loader && sudo prt-get update -fr mesa"
+		echo "graphics: no Intel Vulkan driver found: the model runs on the processor (slower)."
+		echo "          Mesa's Vulkan drivers come with Avalon's services; check: hectas describe"
 	fi
 }
 

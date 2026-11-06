@@ -1,0 +1,160 @@
+#!/usr/bin/env sh
+exec guile --no-auto-compile -e main -s "$0" "$@"
+!#
+;;; hectas: Avalon's package manager, for Guix and Nonguix. (Metamelayer does nixpkgs.)
+;;;
+;;; Your own programs live in your profile, straight away; the system lives in one file,
+;;; /etc/config.scm, and every change to it is a generation you can go back to from the boot menu.
+;;;
+;;;   hectas search WORDS…          find packages             hectas show PACKAGE
+;;;   hectas install PACKAGE…       into your profile         hectas remove PACKAGE…
+;;;   hectas upgrade [PACKAGE…]     your profile              hectas list
+;;;   hectas shell PACKAGE…         a shell with them, nothing installed
+;;;   hectas update                 everything: guix pull, the system, your profile
+;;;   hectas pull                   fetch the latest Guix, Nonguix and Avalon
+;;;   hectas edit                   edit /etc/config.scm, then offer to apply it
+;;;   hectas reconfigure            apply /etc/config.scm (a new system generation)
+;;;   hectas generations            the system's generations   hectas rollback   hectas switch N
+;;;   hectas keep                   write your profile's packages to ~/.config/avalon/manifest.scm
+;;;   hectas restore                install everything listed there (on a new machine, say)
+;;;   hectas flatpak APP-ID         from Flathub, for the few things only made that way (Sober)
+;;;   hectas gc [DAYS]              delete what no generation older than DAYS (default 30) uses
+;;;   hectas describe               which Guix, Nonguix and Avalon you're running
+;;;   hectas status
+;;;
+;;; Every command shows the guix command it runs, so nothing is hidden.
+
+(setlocale LC_ALL "")
+(use-modules (ice-9 match) (ice-9 format) (ice-9 popen) (ice-9 rdelim) (srfi srfi-1))
+
+(define config (or (getenv "HECTAS_CONFIG") "/etc/config.scm"))
+(define manifest
+  (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config"))
+                 "/avalon/manifest.scm"))
+(define flathub "https://dl.flathub.org/repo/flathub.flatpakrepo")
+
+(define (say fmt . args)
+  (format #t "~%\x1b[1;36m==> ~?\x1b[0m~%" fmt args)
+  (force-output))
+(define (fail fmt . args)
+  (format (current-error-port) "\x1b[1;35mhectas: ~?\x1b[0m~%" fmt args)
+  (exit 1))
+
+(define (run . args)
+  "Show ARGS, run them, and return #t if they succeeded."
+  (format #t "\x1b[2m$ ~a\x1b[0m~%" (string-join args " "))
+  (force-output)
+  (zero? (status:exit-val (apply system* args))))
+(define (run! . args)
+  (unless (apply run args) (exit 1)))
+
+(define (output . args)
+  (let* ((port (apply open-pipe* OPEN_READ args))
+         (text (read-delimited "" port)))
+    (close-pipe port)
+    (if (eof-object? text) "" text)))
+
+(define (have? program)
+  (zero? (status:exit-val (system* "sh" "-c" (string-append "command -v " program " >/dev/null")))))
+
+(define (yes? question)
+  (format #t "~a [y/N] " question)
+  (force-output)
+  (let ((answer (read-line)))
+    (and (string? answer) (member (string-downcase (string-trim-both answer)) '("y" "yes")))))
+
+(define (needs what args)
+  (when (null? args) (fail "~a ~a needs ~a" (basename (car (command-line))) (cadr (command-line)) what)))
+
+;;; the system
+
+(define (reconfigure)
+  (say "Applying ~a (a new system generation)" config)
+  (run! "sudo" "guix" "system" "reconfigure" config))
+
+(define (update)
+  (say "Fetching the latest Guix, Nonguix and Avalon")
+  (run! "guix" "pull")
+  (reconfigure)
+  (say "Your own packages")
+  (run! "guix" "upgrade")
+  (when (have? "flatpak")
+    (say "Flatpaks")
+    (run "flatpak" "update" "--user" "-y"))
+  (say "Done. If anything misbehaves: hectas rollback (or the previous generation in the boot menu)"))
+
+(define (edit)
+  (let ((editor (or (getenv "VISUAL") (getenv "EDITOR") "nano")))
+    (run! "sudo" "env" (string-append "EDITOR=" editor) "sudoedit" config)
+    (when (yes? "Apply it now?")
+      (reconfigure))))
+
+(define (gc days)
+  (say "The system's generations older than ~a days" days)
+  (run "sudo" "guix" "system" "delete-generations" (string-append days "d"))
+  (say "Your profile's generations older than ~a days, then everything nothing uses" days)
+  (run! "guix" "gc" "-d" (string-append days "d")))
+
+(define (keep)
+  (let ((dir (dirname manifest)))
+    (run! "mkdir" "-p" dir)
+    (say "Your profile's packages, written to ~a" manifest)
+    (let ((text (output "guix" "package" "--export-manifest")))
+      (call-with-output-file manifest (lambda (port) (display text port)))
+      (display text))))
+
+(define (restore)
+  (unless (file-exists? manifest) (fail "no ~a yet (hectas keep writes it)" manifest))
+  (say "Installing everything in ~a" manifest)
+  (run! "guix" "package" "-m" manifest))
+
+(define (flatpak app)
+  (unless (have? "flatpak") (fail "flatpak isn't installed (Avalon's services add it)"))
+  (run! "flatpak" "remote-add" "--user" "--if-not-exists" "flathub" flathub)
+  (say "~a, from Flathub" app)
+  (run! "flatpak" "install" "--user" "-y" "flathub" app)
+  (format #t "~%It's in the launcher after your next log-in, or now: flatpak run ~a~%" app))
+
+(define (status)
+  (format #t "Avalon 1 (Iskra), on Guix System~%~%")
+  (display (output "guix" "describe"))
+  (format #t "~%System generation: ~a"
+          (output "sh" "-c" "guix system list-generations 2>/dev/null | grep -A1 current | head -2 | tr -s ' '"))
+  (format #t "Your profile: ~a packages~%"
+          (length (filter (lambda (l) (not (string-null? l)))
+                          (string-split (output "guix" "package" "-I") #\newline))))
+  (when (have? "nix")
+    (format #t "Nix (Metamelayer): ~a" (output "nix" "--version"))))
+
+(define (main args)
+  (match (cdr args)
+    (("search" . words) (needs "something to look for" words) (apply run! "guix" "search" words))
+    (("show" pkg) (run! "guix" "show" pkg))
+    (("install" . pkgs) (needs "a package" pkgs) (apply run! "guix" "install" pkgs))
+    (("remove" . pkgs) (needs "a package" pkgs) (apply run! "guix" "remove" pkgs))
+    (("upgrade" . pkgs) (apply run! "guix" "upgrade" pkgs))
+    (("list") (run! "guix" "package" "-I"))
+    (("shell" . pkgs) (needs "a package" pkgs) (apply run! "guix" "shell" pkgs))
+    (("update") (update))
+    (("pull") (run! "guix" "pull"))
+    (("edit") (edit))
+    (("reconfigure") (reconfigure))
+    (("generations") (run! "guix" "system" "list-generations"))
+    (("rollback") (run! "sudo" "guix" "system" "roll-back"))
+    (("switch" n) (run! "sudo" "guix" "system" "switch-generation" n))
+    (("keep") (keep))
+    (("restore") (restore))
+    (("flatpak" app) (flatpak app))
+    (("gc") (gc "30"))
+    (("gc" days) (gc days))
+    (("describe") (run! "guix" "describe"))
+    (("status") (status))
+    (_ (let ((port (open-input-file (car args) #:encoding "UTF-8")))
+         ;; the comment at the top of this file is the help
+         (let loop ((line (read-line port)))
+           (unless (eof-object? line)
+             (when (string-prefix? ";;;" line)
+               (display (string-drop line (min 4 (string-length line))))
+               (newline))
+             (loop (read-line port))))
+         (exit 2)))))

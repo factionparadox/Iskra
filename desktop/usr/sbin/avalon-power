@@ -1,11 +1,14 @@
 #!/bin/sh
-# /usr/sbin/avalon-power: suspend, restart, power off, or set the battery charge limit (as root; the Garden System runs it
-# through sudo, which /etc/sudoers.d/avalon allows for the wheel group without a password).
+# avalon-power: suspend, restart and power off (through elogind: your own session may, no
+# password), and, as root, the battery's charge limit:
+#   avalon-power suspend|reboot|off
+#   sudo avalon-power charge-limit N     stop charging at N% (50-100); kept for every boot in
+#                                        /etc/avalon/charge-limit (Avalon's services apply it)
 case $1 in
-  suspend) sync; echo mem > /sys/power/state ;;
-  reboot)  exec /sbin/shutdown -r now ;;
-  off)     exec /sbin/shutdown -h now ;;
-  charge-limit)   # stop charging at N% (50-100), kept in /etc/avalon/charge-limit for every boot
+  suspend) exec loginctl suspend ;;
+  reboot)  exec loginctl reboot ;;
+  off)     exec loginctl poweroff ;;
+  charge-limit)
            n=$2
            case $n in ''|*[!0-9]*) echo "charge-limit needs a number" >&2; exit 2 ;; esac
            [ "$n" -ge 50 ] && [ "$n" -le 100 ] || { echo "charge-limit: 50-100" >&2; exit 2; }
@@ -13,7 +16,7 @@ case $1 in
            for b in /sys/class/power_supply/BAT*/charge_control_end_threshold; do
              [ -w "$b" ] && echo "$n" > "$b" && found=1
            done
-           [ -n "$found" ] || { echo "this battery has no charge limit" >&2; exit 1; }
+           [ -n "$found" ] || { echo "this battery has no charge limit (or run it with sudo)" >&2; exit 1; }
            mkdir -p /etc/avalon && echo "$n" > /etc/avalon/charge-limit ;;
   *)       echo "usage: avalon-power suspend|reboot|off|charge-limit N" >&2; exit 2 ;;
 esac

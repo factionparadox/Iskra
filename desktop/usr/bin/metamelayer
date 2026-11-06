@@ -1,126 +1,86 @@
-#!/bin/sh
-# metamelayer: Avalon's package manager, over CRUX's own tools (prt-get, pkgmk, pkgutils).
-#
-#   metamelayer sync               update the ports: CRUX's collections and Avalon's
-#   metamelayer install NAME...    build and install, with what they depend on
-#   metamelayer remove NAME...     remove
-#   metamelayer upgrade            sync, then rebuild whatever is out of date
-#   metamelayer search WORD        find ports by name
-#   metamelayer info NAME          what a port is and what it needs
-#   metamelayer list               what's installed
-#   metamelayer diff               installed packages with newer ports
-#   metamelayer key                make your own signing key for Avalon's ports (once)
-#   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
-#   metamelayer gentoo [CMD...]    the escape hatch: Gentoo with Portage in /var/lib/gentoo
-#                                  (a shell there; or: emerge ARGS, sync, run PROGRAM, update,
-#                                  unmount, remove). See docs/escape-hatch.md
-#
-# Avalon's ports are signed by you: the key lives in /etc/ports/avalon.{pub,sec} on this
-# machine and nowhere else, and pkgmk refuses a port whose files don't match its signature.
-set -e
-AVALON=${AVALON_SRC:-/usr/ports/avalon}
-PORTS=$AVALON/ports
-KEY=/etc/ports/avalon
+#!/usr/bin/env sh
+exec guile --no-auto-compile -e main -s "$0" "$@"
+!#
+;;; metamelayer: nixpkgs for Avalon, for what Guix and Nonguix don't have. (HECTAS does Guix.)
+;;;
+;;; Nix is kept at arm's length: everything goes in your own Nix profile (~/.nix-profile), built by
+;;; the Nix daemon Avalon runs; nothing touches the Guix system, /etc/config.scm or your Guix
+;;; profile. The Garden System adds ~/.nix-profile to the PATH and the launcher.
+;;;
+;;;   metamelayer setup               once: the nixpkgs channel (nixpkgs-unstable)
+;;;   metamelayer search WORDS…       find packages              metamelayer list
+;;;   metamelayer install PACKAGE…    into your Nix profile      metamelayer remove PACKAGE…
+;;;   metamelayer upgrade             update nixpkgs and upgrade everything from it
+;;;   metamelayer run PACKAGE [ARGS…] run without installing     metamelayer shell PACKAGE…
+;;;   metamelayer gl COMMAND…         run a Nix program that needs the graphics (through nixGL)
+;;;   metamelayer rollback            your Nix profile's previous generation
+;;;   metamelayer gc                  delete old Nix generations and what nothing uses
+;;;
+;;; Every command shows the nix command it runs.
 
-say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
-die() { printf '\033[1;35mmetamelayer:\033[0m %s\n' "$*" >&2; exit 1; }
-root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo metamelayer $*"; }
+(setlocale LC_ALL "")
+(use-modules (ice-9 match) (ice-9 format) (ice-9 rdelim) (srfi srfi-1))
 
-sync_ports() {
-	say "CRUX's ports"
-	ports -u
-	if [ -d "$AVALON/.git" ]; then
-		say "Avalon's ports ($AVALON)"
-		git -C "$AVALON" pull --ff-only
-		[ -f "$KEY.sec" ] && sign_ports
-	fi
-	return 0
-}
+(define channel "https://nixos.org/channels/nixpkgs-unstable")
+(define features '("--extra-experimental-features" "nix-command flakes"))
 
-make_key() {
-	root key
-	[ -f "$KEY.sec" ] && { echo "You already have a key: $KEY.pub"; return 0; }
-	install -d -m 755 /etc/ports
-	# signify wants both names bare, in the same folder (keyname.pub and keyname.sec)
-	( cd "$(dirname "$KEY")" && signify -G -n -c "Avalon ports, signed on $(hostname)" \
-		-p "$(basename "$KEY").pub" -s "$(basename "$KEY").sec" )
-	chmod 600 "$KEY.sec"
-	say "Your key: $KEY.pub (the secret half, $KEY.sec, never leaves this machine)"
-}
+(define (say fmt . args)
+  (format #t "~%\x1b[1;36m==> ~?\x1b[0m~%" fmt args)
+  (force-output))
+(define (fail fmt . args)
+  (format (current-error-port) "\x1b[1;35mmetamelayer: ~?\x1b[0m~%" fmt args)
+  (exit 1))
+(define (run . args)
+  (format #t "\x1b[2m$ ~a\x1b[0m~%" (string-join args " "))
+  (force-output)
+  (zero? (status:exit-val (apply system* args))))
+(define (run! . args)
+  (unless (apply run args) (exit 1)))
+(define (needs what args)
+  (when (null? args) (fail "~a ~a needs ~a" (basename (car (command-line))) (cadr (command-line)) what)))
 
-sign_ports() {
-	[ -f "$KEY.sec" ] || die "no key yet: sudo metamelayer key"
-	if [ $# -eq 0 ]; then set -- $(ls "$PORTS"); fi
-	for p in "$@"; do
-		[ -f "$PORTS/$p/Pkgfile" ] || continue
-		( cd "$PORTS/$p" && pkgmk -d -us -sk "$KEY.sec" >/dev/null ) && echo "    signed $p" ||
-			echo "    could not sign $p (its sources didn't download?)"
-	done
-}
+(define (ready?)
+  (and (zero? (status:exit-val (system* "sh" "-c" "command -v nix-env >/dev/null")))
+       (zero? (status:exit-val (system* "sh" "-c" "nix-channel --list 2>/dev/null | grep -q '^nixpkgs '")))))
 
- # Gentoo lives in its own root, /var/lib/gentoo, so Portage and CRUX never overwrite each
-# other's files. It shares /home, /run and the devices, so its programs can open windows here.
-G=/var/lib/gentoo
-gentoo() {
-	root gentoo
-	[ -x $G/usr/bin/emerge ] || die "no Gentoo in $G (the Avalon disc puts it there)"
-	gentoo_unmount() {   # deepest first; /home is shared, so it must be off before any deleting
-		for m in $(awk -v g="$G/" 'index($2, g) == 1 {print $2}' /proc/mounts | sort -r); do
-			umount -l "$m"
-		done
-		! grep -q " $G/" /proc/mounts
-	}
-	case ${1:-} in
-		unmount) gentoo_unmount && say "Gentoo is unmounted"; return ;;
-		remove)
-			gentoo_unmount || die "something in $G is still mounted; reboot, then run this again"
-			printf 'Delete Gentoo (%s, %s)? Your home is not touched. Type yes: ' "$G" "$(du -sh $G | cut -f1)"
-			read -r ok; [ "$ok" = yes ] || die "kept"
-			rm -rf --one-file-system "$G" && say "Gentoo is gone"; return ;;
-	esac
-	grep -q " $G/proc " /proc/mounts || {
-		mount -t proc proc $G/proc
-		mount --rbind /sys $G/sys && mount --make-rslave $G/sys
-		mount --rbind /dev $G/dev && mount --make-rslave $G/dev
-		mount --bind /run $G/run
-		mount --bind /home $G/home
-		mount -t tmpfs tmpfs $G/tmp
-		[ -d /tmp/.X11-unix ] && mkdir -p $G/tmp/.X11-unix && mount --bind /tmp/.X11-unix $G/tmp/.X11-unix  || true
-	}
-	cp -L /etc/resolv.conf $G/etc/resolv.conf
-	u=${SUDO_USER:-}
-	if [ -n "$u" ] && ! grep -q "^$u:" $G/etc/passwd; then   # you, inside Gentoo too
-		grep "^$u:" /etc/passwd >> $G/etc/passwd
-		grep "^$u:" /etc/shadow >> $G/etc/shadow
-		g=$(id -gn "$u"); grep -q "^$g:" $G/etc/group || grep "^$g:" /etc/group >> $G/etc/group
-	fi
-	in_g() { chroot $G /usr/bin/env -i HOME=/root TERM="${TERM:-linux}" PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
-	case ${1:-} in
-		"")     say "Gentoo (Portage). 'exit' to come back to Avalon"; in_g /bin/bash -l ;;
-		emerge) shift; in_g emerge --getbinpkg "$@" ;;
-		sync)   in_g emerge --sync || in_g emerge-webrsync ;;
-		update) in_g emerge --sync; in_g emerge --getbinpkg -uDN @world ;;
-		run)    shift; [ -n "$u" ] || die "run it with sudo, as yourself"
-			rt=/run/user/$(id -u "$u")
-			wl=$(ls "$rt" 2>/dev/null | grep -m1 '^wayland-[0-9]*$' || echo wayland-0)
-			in_g su - "$u" -c "export WAYLAND_DISPLAY=$wl XDG_RUNTIME_DIR=$rt; $*" ;;
-		*)      in_g "$@" ;;
-	esac
-}
+(define (setup)
+  (unless (zero? (status:exit-val (system* "sh" "-c" "command -v nix-env >/dev/null")))
+    (fail "Nix isn't here: Avalon's services run it (nix-service-type); hectas reconfigure"))
+  (say "The nixpkgs channel")
+  (run! "nix-channel" "--add" channel "nixpkgs")
+  (run! "nix-channel" "--update")
+  (say "Ready: metamelayer install PACKAGE"))
 
-[ $# -ge 1 ] || { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-cmd=$1; shift
-case $cmd in
-	sync)            root sync; sync_ports ;;
-	install|in)      root install; exec prt-get depinst "$@" ;;
-	remove|rm)       root remove; exec prt-get remove "$@" ;;
-	upgrade|up)      root upgrade; sync_ports; exec prt-get sysup ;;
-	search|s)        exec prt-get search "$@" ;;
-	info)            exec prt-get info "$@" ;;
-	list|ls)         exec prt-get listinst ;;
-	diff)            exec prt-get diff ;;
-	key)             make_key ;;
-	sign)            root sign; sign_ports "$@" ;;
-	gentoo|portage)  gentoo "$@" ;;
-	*)               die "unknown command '$cmd' (metamelayer with no arguments lists them)" ;;
-esac
+(define (need-ready)
+  (unless (ready?) (setup)))
+
+(define (main args)
+  (match (cdr args)
+    (("setup") (setup))
+    (("search" . words)
+     (needs "something to look for" words)
+     (apply run! "nix" (append features (list "search" "nixpkgs") words)))
+    (("install" . pkgs)
+     (needs "a package" pkgs) (need-ready)
+     (apply run! "nix-env" "-iA" (map (lambda (p) (string-append "nixpkgs." p)) pkgs))
+     (format #t "~%In the launcher after your next log-in (or run it by name now).~%"))
+    (("remove" . pkgs) (needs "a package" pkgs) (apply run! "nix-env" "-e" pkgs))
+    (("upgrade") (need-ready) (run! "nix-channel" "--update") (run! "nix-env" "-u"))
+    (("list") (run! "nix-env" "-q"))
+    (("run" pkg . rest)
+     (need-ready)
+     (run! "nix-shell" "-p" pkg "--run" (string-join (cons pkg rest) " ")))
+    (("shell" . pkgs) (needs "a package" pkgs) (need-ready) (apply run! "nix-shell" "-p" pkgs))
+    (("gl" . cmd)
+     (needs "a command" cmd)
+     (apply run! "nix" (append features (list "run" "--impure" "github:nix-community/nixGL" "--") cmd)))
+    (("rollback") (run! "nix-env" "--rollback"))
+    (("gc") (run! "nix-collect-garbage" "-d"))
+    (_ (let ((port (open-input-file (car args) #:encoding "UTF-8")))
+         (let loop ((line (read-line port)))
+           (unless (eof-object? line)
+             (when (string-prefix? ";;;" line)
+               (display (string-drop line (min 4 (string-length line))))
+               (newline))
+             (loop (read-line port))))
+         (exit 2)))))

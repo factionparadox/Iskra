@@ -97,8 +97,17 @@ PanelWindow {
 			sh(["neredy", "say", a.join(" ")]) } },
 		{ name: "settings", args: "[page]", what: "Avalon Control (appearance, display, sound, network…)", run: a =>
 			sh(["avalon-control"].concat(a.slice(0, 1))) },
-		{ name: "update", args: "", what: "update Avalon (metamelayer upgrade), in a terminal", run: a =>
-			sh(["kitty", "--hold", "sh", "-c", "sudo metamelayer upgrade"]) },
+		{ name: "update", args: "", what: "update Avalon (HECTAS, then Metamelayer), in a terminal", run: a =>
+			sh(["kitty", "--hold", "avalon", "update"]) },
+		{ name: "install", args: "a package", what: "install from Guix or Nonguix (HECTAS)", run: a => {
+			if (!a.length) return tell("install what?", true)
+			sh(["kitty", "--hold", "hectas", "install"].concat(a)) } },
+		{ name: "nix", args: "a package", what: "install from nixpkgs (Metamelayer)", run: a => {
+			if (!a.length) return tell("install what from nixpkgs?", true)
+			sh(["kitty", "--hold", "metamelayer", "install"].concat(a)) } },
+		{ name: "flatpak", args: "an app id", what: "install a Flatpak from Flathub (e.g. org.vinegarhq.Sober)", run: a => {
+			if (!a.length) return tell("which Flatpak? e.g. org.vinegarhq.Sober", true)
+			sh(["kitty", "--hold", "hectas", "flatpak", a[0]]) } },
 		{ name: "lock", args: "", what: "lock the screen", run: a => { if (lock) lock.lock() } },
 		{ name: "suspend", args: "", what: "sleep", run: a => sh(["avalon", "power", "suspend"]) },
 		{ name: "restart", args: "", what: "restart the laptop", run: a => sh(["avalon", "power", "reboot"]) },

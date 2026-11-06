@@ -3,6 +3,13 @@
 # light and the shell itself; each only if it's installed and not already running.
 have() { command -v "$1" >/dev/null 2>&1; }
 running() { pgrep -x "$1" >/dev/null 2>&1; }
+# programs installed with Metamelayer (Nix): on the PATH, and in the launcher
+if [ -d "$HOME/.nix-profile" ]; then
+	export PATH="$PATH:$HOME/.nix-profile/bin"
+	export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/run/current-system/profile/share}:$HOME/.nix-profile/share"
+fi
+# and Flatpaks (Sober and the like)
+export XDG_DATA_DIRS="$XDG_DATA_DIRS:$HOME/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share"
 # sound: PipeWire, its session manager and PulseAudio emulation
 have pipewire && ! running pipewire && { pipewire & sleep 0.3; }
 have wireplumber && ! running wireplumber && wireplumber &

@@ -1,13 +1,13 @@
 #!/bin/sh
 # avalon: Avalon's own commands.
-#   avalon power suspend|reboot|off     the session's power actions
-#   avalon update                       sync the ports and upgrade (Metamelayer)
+#   avalon power suspend|reboot|off     the session's power actions (elogind, no password)
+#   avalon update                       update Avalon: Guix and Nonguix (HECTAS), then Nix (Metamelayer)
 #   avalon neredy setup [small|large]   download a model for Neredy (see: neredy)
 #   avalon version
 case $1 in
-  power)   shift; exec sudo -n /usr/sbin/avalon-power "$@" ;;
-  update)  exec sudo metamelayer upgrade ;;
+  power)   shift; exec avalon-power "$@" ;;
+  update)  hectas update && { command -v nix >/dev/null 2>&1 && metamelayer upgrade || true; } ;;
   neredy)  shift; exec neredy "$@" ;;
-  version) cat /usr/share/avalon/release 2>/dev/null || echo "Avalon" ;;
+  version) echo "Avalon 1 (Iskra), on Guix System"; guix describe 2>/dev/null | sed -n '1,12p' ;;
   *)       sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
