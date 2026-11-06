@@ -37,7 +37,9 @@ PanelWindow {
 			["Super + V", "Video"],
 			["Super + A", "ani-cli"],
 			["Super + P", "Proton VPN"],
-			["Super + N", "Neredy"] ] },
+			["Super + N", "Neredy"],
+			["Super + ;", "Command Mode: type a command"],
+			["Super + ,", "Avalon Control: settings"] ] },
 		{ title: "Windows", keys: [
 			["Super + Q", "Close the window"],
 			["Super + F", "Column full width"],

@@ -15,11 +15,12 @@ The first release is **Avalon 1 "Iskra"**.
 | Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key |
 | Escape hatch | Gentoo with **Portage**, in its own root: `sudo metamelayer gentoo` |
 | Compositor | **MangoWC** (Wayland, dwl-based): tags, a Niri-style scroller, blur via scenefx |
-| Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, notifications, lock, login |
+| Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, Command Mode, notifications, lock, login |
 | Terminal | kitty, which shows Pasha as a picture in fastfetch |
 | Login | greetd, with the Garden System's own login screen (in cage) |
 | Assistant | **Neredy**, local AI on llama.cpp (Vulkan), with a Russian tutor mode and a Russian voice (Piper) |
-| Settings | **Avalon Control**, GTK4 (to come); Command Mode (to come) |
+| Settings | **Avalon Control**, GTK4 (Super+,): [docs/avalon-control.md](docs/avalon-control.md) |
+| Commands | **Command Mode** (Super+;): run the Garden by typing, [docs/command-mode.md](docs/command-mode.md) |
 
 No Flatpak: everything is a native package.
 

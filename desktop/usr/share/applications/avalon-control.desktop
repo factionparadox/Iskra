@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Avalon Control
+GenericName=Settings
+Comment=Appearance, display, sound, network, Bluetooth, power, keyboard, Neredy, updates
+Exec=avalon-control
+Icon=preferences-system
+Categories=Settings;System;
+Keywords=settings;wifi;bluetooth;sound;volume;brightness;keyboard;wallpaper;battery;update;

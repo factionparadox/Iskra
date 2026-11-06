@@ -18,7 +18,10 @@ Variants {
 
 			Image {
 				anchors.fill: parent
-				source: "file:///usr/share/avalon/garden-wallpaper.png"
+				// your own picture (Avalon Control links it here), else the garden
+				readonly property string garden: "file:///usr/share/avalon/garden-wallpaper.png"
+				source: "file://" + Quickshell.env("HOME") + "/.config/avalon/wallpaper"
+				onStatusChanged: if (status === Image.Error) source = garden
 				fillMode: Image.PreserveAspectCrop
 				asynchronous: true
 				smooth: true

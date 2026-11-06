@@ -1,0 +1,749 @@
+#!/usr/bin/env python3
+"""Avalon Control: Avalon's settings, in GTK4, dressed as the Garden System.
+
+    avalon-control [PAGE]      PAGE: appearance display sound network bluetooth power keyboard
+                                     neredy updates gentoo about     (Super+, opens it)
+
+It changes things with the same tools you would use by hand, so nothing is hidden:
+  Mango's look and keyboard   ~/.config/mango/config.conf (a copy of /etc/mango/config.conf with
+                              your changes; "Avalon's defaults" deletes it), then mmsg reload
+  wallpaper                   ~/.config/avalon/wallpaper (a link to your picture)
+  brightness, night light     brightnessctl, wlsunset
+  sound                       wpctl (PipeWire)
+  network, Bluetooth          nmcli, bluetoothctl
+  battery charge limit        sudo avalon-power charge-limit N
+  Neredy, updates, Gentoo     neredy, metamelayer (long jobs open in kitty, so you see them)
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Gdk', '4.0')
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+
+HOME = Path.home()
+MANGO_SYSTEM = Path('/etc/mango/config.conf')
+MANGO_USER = HOME / '.config/mango/config.conf'
+WALLPAPER = HOME / '.config/avalon/wallpaper'
+GARDEN_WALLPAPER = Path('/usr/share/avalon/garden-wallpaper.png')
+PORTRAIT = Path('/usr/share/avalon/pasha-portrait.png')
+GLYPHS = ['土', '水', '風', '火']
+
+CSS = """
+window, .garden { background: #070b16; color: #eef4fb; font-family: "DejaVu Sans"; }
+.sidebar { background: linear-gradient(to bottom, #0c1426, #070b16); border-right: 1px solid #3a5a8c; padding: 14px 10px; }
+.tabs { background: transparent; }
+.tabs row { background: linear-gradient(to bottom, #2f6f8c, #10203c); border: 1px solid #3a5a8c;
+               margin: 3px 4px; padding: 6px 14px; color: #eef4fb; font-weight: bold; }
+.tabs row:selected { background: linear-gradient(to bottom, #3fa6c4, #163a5c); border-color: #5fd8f0; }
+.tabs row:hover { border-color: #8fd6ff; }
+.glyph { font-weight: bold; margin-right: 10px; }
+.earth { color: #c9a35a; } .water { color: #6a84e8; } .wind { color: #5bc85b; } .fire { color: #e0705a; }
+.plate { background: #bfe3d6; color: #0c1426; font-weight: bold; font-size: 15pt; padding: 4px 26px; }
+.page { padding: 26px 34px; }
+.panel { background: linear-gradient(to bottom, rgba(34,36,134,0.92), rgba(16,18,74,0.92));
+         border: 2px solid #4c50b4; padding: 16px 20px; }
+.heading { color: #5fd8f0; font-weight: bold; font-size: 11pt; letter-spacing: 2px; }
+.dim { color: #8fa0bf; }
+.value { color: #ffffff; font-weight: bold; }
+.mint { color: #bfe3d6; }
+.bad { color: #ff3fa4; }
+button { background: linear-gradient(to bottom, #e6efe9, #b9c8c0); color: #141c24; border: 1px solid #9fb2a8;
+         font-weight: bold; padding: 4px 16px; border-radius: 0; box-shadow: none; }
+button:hover { border-color: #5fd8f0; }
+button.accent { background: linear-gradient(to bottom, #6a68f0, #4a48c8); color: white; border-color: #96a0ff; }
+scale trough { background: #0c1426; border: 1px solid #3a5a8c; min-height: 8px; }
+scale highlight { background: linear-gradient(to right, #3fa6c4, #5fd8f0); }
+scale slider { background: #bfe3d6; border: 1px solid #0c1426; min-width: 18px; min-height: 18px; border-radius: 0; }
+switch { background: #0c1426; border: 1px solid #3a5a8c; border-radius: 0; }
+switch:checked { background: #5856de; }
+switch slider { background: #bfe3d6; border-radius: 0; }
+entry, dropdown button, spinbutton { background: #0c1426; color: #eef4fb; border: 1px solid #3a5a8c; border-radius: 0; }
+listview, list.items { background: transparent; }
+list.items row { padding: 6px 10px; border-bottom: 1px solid rgba(76,80,180,0.5); }
+list.items row:selected { background: #5856de; }
+textview, textview text { background: #05081a; color: #bfe3d6; font-family: "DejaVu Sans Mono"; font-size: 10pt; }
+"""
+
+
+# ---- doing things -----------------------------------------------------------------------
+
+def have(cmd):
+    return shutil.which(cmd) is not None
+
+
+def run(*cmd, timeout=10):
+    """run a command, return (ok, output); never raises"""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode == 0, (r.stdout + r.stderr).strip()
+    except FileNotFoundError:
+        return False, f'{cmd[0]} isn’t installed'
+    except subprocess.TimeoutExpired:
+        return False, f'{cmd[0]} took too long'
+    except OSError as e:
+        return False, str(e)
+
+
+def spawn(*cmd):
+    try:
+        subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
+def in_terminal(shell_cmd):
+    """long jobs run in kitty, so you can see them and answer sudo"""
+    return spawn('kitty', '--hold', 'sh', '-c', shell_cmd)
+
+
+def later(work, done):
+    """run work() in a thread, then done(result) back on the GTK side"""
+    def go():
+        result = work()
+        GLib.idle_add(lambda: done(result) and False)
+    threading.Thread(target=go, daemon=True).start()
+
+
+# ---- Mango's settings: your copy of Avalon's file ---------------------------------------
+
+def mango_text():
+    for p in (MANGO_USER, MANGO_SYSTEM):
+        if p.is_file():
+            return p.read_text()
+    return ''
+
+
+def mango_get(key, default=''):
+    m = re.search(rf'^{re.escape(key)}=(.*)$', mango_text(), re.M)
+    return m.group(1).strip() if m else default
+
+
+def mango_set(changes):
+    text = mango_text()
+    for key, value in changes.items():
+        line = f'{key}={value}'
+        if re.search(rf'^{re.escape(key)}=', text, re.M):
+            text = re.sub(rf'^{re.escape(key)}=.*$', line, text, count=1, flags=re.M)
+        else:
+            text = text.rstrip('\n') + '\n' + line + '\n'
+    MANGO_USER.parent.mkdir(parents=True, exist_ok=True)
+    MANGO_USER.write_text(text)
+    run('mmsg', 'dispatch', 'reload_config')
+
+
+def mango_reset():
+    if MANGO_USER.exists():
+        MANGO_USER.unlink()
+    run('mmsg', 'dispatch', 'reload_config')
+
+
+# ---- building blocks --------------------------------------------------------------------
+
+def label(text, *classes, xalign=0.0, wrap=False):
+    w = Gtk.Label(label=text, xalign=xalign)
+    w.set_wrap(wrap)
+    for c in classes:
+        w.add_css_class(c)
+    return w
+
+
+def panel(title, *children):
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+    box.add_css_class('panel')
+    box.append(label(title.upper(), 'heading'))
+    for c in children:
+        box.append(c)
+    return box
+
+
+def row(name, widget, note=None):
+    """a setting: its name on the left, the control on the right"""
+    h = Gtk.Box(spacing=16)
+    v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    v.append(label(name, 'value'))
+    if note:
+        v.append(label(note, 'dim', wrap=True))
+    v.set_hexpand(True)
+    h.append(v)
+    widget.set_valign(Gtk.Align.CENTER)
+    h.append(widget)
+    return h
+
+
+def switch(active, on_change):
+    s = Gtk.Switch(active=active)
+    s.connect('notify::active', lambda w, _p: on_change(w.get_active()))
+    return s
+
+
+def slider(value, lo, hi, on_change, step=1, width=320):
+    s = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, lo, hi, step)
+    s.set_value(value)
+    s.set_size_request(width, -1)
+    s.set_draw_value(True)
+    s.set_value_pos(Gtk.PositionType.RIGHT)
+    s.set_digits(0)
+    pending = {}
+
+    def changed(w):   # settle before acting, so dragging doesn't fire a command per pixel
+        if pending.get('id'):
+            GLib.source_remove(pending['id'])
+        pending['id'] = GLib.timeout_add(120, lambda: (on_change(int(w.get_value())), pending.clear(), False)[2])
+    s.connect('value-changed', changed)
+    return s
+
+
+def button(text, on_click, accent=False):
+    b = Gtk.Button(label=text)
+    if accent:
+        b.add_css_class('accent')
+    b.connect('clicked', lambda _b: on_click())
+    return b
+
+
+def buttons(*bs):
+    h = Gtk.Box(spacing=10)
+    for b in bs:
+        h.append(b)
+    return h
+
+
+def output_view(text=''):
+    tv = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+    tv.get_buffer().set_text(text)
+    sw = Gtk.ScrolledWindow(min_content_height=160)
+    sw.set_child(tv)
+    sw.text = lambda t: tv.get_buffer().set_text(t)
+    return sw
+
+
+# ---- the pages --------------------------------------------------------------------------
+
+def page_appearance(win):
+    status = label('', 'mint')
+
+    def setp(changes, note):
+        mango_set(changes)
+        status.set_text(note)
+
+    def choose_wallpaper():
+        dialog = Gtk.FileDialog(title='A picture for the garden')
+        f = Gtk.FileFilter()
+        f.add_mime_type('image/png')
+        f.add_mime_type('image/jpeg')
+        f.add_mime_type('image/webp')
+        f.set_name('Pictures')
+        store = Gio_list(f)
+        dialog.set_filters(store)
+
+        def picked(d, res):
+            try:
+                path = d.open_finish(res).get_path()
+            except GLib.Error:
+                return
+            WALLPAPER.parent.mkdir(parents=True, exist_ok=True)
+            if WALLPAPER.is_symlink() or WALLPAPER.exists():
+                WALLPAPER.unlink()
+            WALLPAPER.symlink_to(path)
+            spawn('garden', 'reload')
+            status.set_text(f'Wallpaper: {Path(path).name}')
+        dialog.open(win, None, picked)
+
+    def garden_wallpaper():
+        if WALLPAPER.is_symlink() or WALLPAPER.exists():
+            WALLPAPER.unlink()
+        spawn('garden', 'reload')
+        status.set_text('Wallpaper: the garden')
+
+    current = os.readlink(WALLPAPER) if WALLPAPER.is_symlink() else 'the garden (Avalon’s own)'
+    return [
+        panel('Wallpaper',
+              row('Picture', buttons(button('Choose…', choose_wallpaper), button('The garden', garden_wallpaper)),
+                  f'Now: {current}')),
+        panel('Windows',
+              row('Blur', switch(mango_get('blur', '1') == '1',
+                                 lambda on: setp({'blur': int(on), 'blur_layer': int(on)}, 'Blur ' + ('on' if on else 'off'))),
+                  'Frosted glass behind see-through windows and panels'),
+              row('Shadows', switch(mango_get('shadows', '1') == '1',
+                                    lambda on: setp({'shadows': int(on), 'layer_shadows': int(on)}, 'Shadows ' + ('on' if on else 'off')))),
+              row('Dim the windows you aren’t using', switch(mango_get('dim_enable', '1') == '1',
+                                                             lambda on: setp({'dim_enable': int(on)}, 'Dimming ' + ('on' if on else 'off')))),
+              row('Animations', switch(mango_get('animations', '1') == '1',
+                                       lambda on: setp({'animations': int(on), 'layer_animations': int(on)}, 'Animations ' + ('on' if on else 'off')))),
+              row('Gaps', slider(int(mango_get('gap_inner_horizontal', '8')), 0, 40,
+                                 lambda v: setp({'gap_inner_horizontal': v, 'gap_inner_vertical': v,
+                                                 'gap_outer_horizontal': v + 6, 'gap_outer_vertical': v + 6}, f'Gaps: {v} px'))),
+              row('Border', slider(int(mango_get('border_px', '1')), 0, 6,
+                                   lambda v: setp({'border_px': v}, f'Border: {v} px'), width=200))),
+        panel('Your changes',
+              row('Avalon’s defaults', button('Reset', lambda: (mango_reset(), status.set_text('Back to Avalon’s defaults'))),
+                  f'Your changes live in {MANGO_USER}; resetting deletes it'),
+              status),
+    ]
+
+
+def Gio_list(*filters):
+    from gi.repository import Gio
+    store = Gio.ListStore.new(Gtk.FileFilter)
+    for f in filters:
+        store.append(f)
+    return store
+
+
+def brightness_now():
+    ok, cur = run('brightnessctl', 'get')
+    ok2, mx = run('brightnessctl', 'max')
+    try:
+        return round(int(cur) * 100 / int(mx))
+    except ValueError:
+        return 50
+
+
+def page_display(win):
+    status = label('', 'mint')
+
+    def night(on):
+        if on:
+            spawn('wlsunset', '-l', '51.5', '-L', '-0.1')
+        else:
+            run('pkill', '-x', 'wlsunset')
+        status.set_text('Night light ' + ('on' if on else 'off'))
+
+    night_on = run('pgrep', '-x', 'wlsunset')[0]
+    return [
+        panel('Screen',
+              row('Brightness', slider(brightness_now(), 1, 100, lambda v: run('brightnessctl', 'set', f'{v}%'))),
+              row('Night light', switch(night_on, night),
+                  'Warmer colours from sunset to sunrise, for London (wlsunset)')),
+        status,
+    ]
+
+
+def wp_volume(target):
+    ok, out = run('wpctl', 'get-volume', target)
+    m = re.search(r'Volume:\s*([\d.]+)', out)
+    return (round(float(m.group(1)) * 100) if m else 50), ('MUTED' in out)
+
+
+def page_sound(win):
+    out_vol, out_muted = wp_volume('@DEFAULT_AUDIO_SINK@')
+    in_vol, in_muted = wp_volume('@DEFAULT_AUDIO_SOURCE@')
+    ok, status = run('wpctl', 'status')
+    devices = '\n'.join(l for l in status.splitlines() if '*' in l)[:2000] or status[:2000]
+    return [
+        panel('Speakers',
+              row('Volume', slider(out_vol, 0, 100, lambda v: run('wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{v}%'))),
+              row('Mute', switch(out_muted, lambda on: run('wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1' if on else '0')))),
+        panel('Microphone',
+              row('Level', slider(in_vol, 0, 100, lambda v: run('wpctl', 'set-volume', '@DEFAULT_AUDIO_SOURCE@', f'{v}%'))),
+              row('Mute', switch(in_muted, lambda on: run('wpctl', 'set-mute', '@DEFAULT_AUDIO_SOURCE@', '1' if on else '0')))),
+        panel('In use (wpctl status)', output_view(devices)),
+    ]
+
+
+def page_network(win):
+    status = label('', 'mint')
+    lst = Gtk.ListBox()
+    lst.add_css_class('items')
+    lst.set_selection_mode(Gtk.SelectionMode.SINGLE)
+    password = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text='password, if it has one')
+    networks = []
+
+    def fill(result):
+        ok, out = result
+        while (child := lst.get_first_child()):
+            lst.remove(child)
+        networks.clear()
+        seen = set()
+        for line in out.splitlines():
+            parts = re.split(r'(?<!\\):', line)
+            if len(parts) < 4 or not parts[1] or parts[1] in seen:
+                continue
+            seen.add(parts[1])
+            ssid = parts[1].replace('\\:', ':')
+            networks.append(ssid)
+            here = '●  ' if parts[0] == '*' else '    '
+            lst.append(label(f'{here}{ssid}    {parts[2]}%    {parts[3] or "open"}', 'value' if parts[0] == '*' else 'mint'))
+        status.set_text(f'{len(networks)} networks' if ok else out)
+        return True
+
+    def scan():
+        status.set_text('Looking…')
+        later(lambda: run('nmcli', '-t', '-f', 'IN-USE,SSID,SIGNAL,SECURITY', 'dev', 'wifi', 'list', '--rescan', 'yes', timeout=20), fill)
+
+    def connect():
+        r = lst.get_selected_row()
+        if not r:
+            status.set_text('Choose a network first')
+            return
+        ssid = networks[r.get_index()]
+        args = ['nmcli', 'dev', 'wifi', 'connect', ssid]
+        if password.get_text():
+            args += ['password', password.get_text()]
+        status.set_text(f'Joining {ssid}…')
+        later(lambda: run(*args, timeout=40), lambda res: (status.set_text(res[1].splitlines()[-1] if res[1] else ''), True)[1])
+
+    wifi_on = run('nmcli', 'radio', 'wifi')[1].strip() == 'enabled'
+    GLib.idle_add(lambda: scan() and False)
+    sw = Gtk.ScrolledWindow(min_content_height=260)
+    sw.set_child(lst)
+    return [
+        panel('Wi-Fi',
+              row('Wi-Fi', switch(wifi_on, lambda on: (run('nmcli', 'radio', 'wifi', 'on' if on else 'off'), scan()))),
+              sw, password,
+              buttons(button('Join', connect, accent=True), button('Look again', scan)),
+              status),
+    ]
+
+
+def page_bluetooth(win):
+    status = label('', 'mint')
+    lst = Gtk.ListBox()
+    lst.add_css_class('items')
+    devices = []
+
+    def fill(result):
+        ok, out = result
+        while (child := lst.get_first_child()):
+            lst.remove(child)
+        devices.clear()
+        for line in out.splitlines():
+            m = re.match(r'Device ([0-9A-F:]{17}) (.*)', line)
+            if m:
+                devices.append(m.group(1))
+                connected = 'Connected: yes' in run('bluetoothctl', 'info', m.group(1))[1]
+                lst.append(label(('●  ' if connected else '    ') + m.group(2), 'value' if connected else 'mint'))
+        status.set_text(f'{len(devices)} devices')
+        return True
+
+    def refresh():
+        later(lambda: run('bluetoothctl', 'devices'), fill)
+
+    def scan():
+        status.set_text('Looking for 8 seconds… (put the device in pairing mode)')
+        later(lambda: run('bluetoothctl', '--timeout', '8', 'scan', 'on', timeout=15), lambda _r: (refresh(), True)[1])
+
+    def act(verb):
+        r = lst.get_selected_row()
+        if not r:
+            status.set_text('Choose a device first')
+            return
+        mac = devices[r.get_index()]
+        status.set_text(f'{verb}…')
+        if verb == 'pair':
+            work = lambda: run('sh', '-c', f'bluetoothctl pair {mac} && bluetoothctl trust {mac} && bluetoothctl connect {mac}', timeout=40)
+        else:
+            work = lambda: run('bluetoothctl', verb, mac, timeout=20)
+        later(work, lambda res: (status.set_text(res[1].splitlines()[-1] if res[1] else verb), refresh(), True)[2])
+
+    powered = 'Powered: yes' in run('bluetoothctl', 'show')[1]
+    refresh()
+    sw = Gtk.ScrolledWindow(min_content_height=240)
+    sw.set_child(lst)
+    return [
+        panel('Bluetooth',
+              row('Bluetooth', switch(powered, lambda on: (run('bluetoothctl', 'power', 'on' if on else 'off'), refresh()))),
+              sw,
+              buttons(button('Look for devices', scan), button('Pair', lambda: act('pair'), accent=True),
+                      button('Connect', lambda: act('connect')), button('Disconnect', lambda: act('disconnect')),
+                      button('Forget', lambda: act('remove'))),
+              status),
+    ]
+
+
+def battery():
+    for b in sorted(Path('/sys/class/power_supply').glob('BAT*')):
+        def r(name):
+            try:
+                return (b / name).read_text().strip()
+            except OSError:
+                return ''
+        return {'path': b, 'capacity': r('capacity'), 'status': r('status'),
+                'limit': r('charge_control_end_threshold'), 'health': r('energy_full'), 'design': r('energy_full_design')}
+    return None
+
+
+def page_power(win):
+    status = label('', 'mint')
+    b = battery()
+    parts = []
+    if b:
+        health = ''
+        try:
+            health = f'{round(int(b["health"]) * 100 / int(b["design"]))}% of new'
+        except ValueError:
+            pass
+        parts.append(panel('Battery',
+                           row('Charge', label(f'{b["capacity"]}%  ·  {b["status"]}', 'value')),
+                           row('Health', label(health or 'unknown', 'mint'))))
+        if b['limit']:
+            def set_limit(v):
+                ok, out = run('sudo', '-n', '/usr/sbin/avalon-power', 'charge-limit', str(v))
+                status.set_text(f'Charges to {v}%' if ok else out)
+            parts.append(panel('Looking after the battery',
+                               row('Stop charging at', slider(int(b['limit']), 50, 100, set_limit, width=260),
+                                   'Keeping it below 100% when you’re mostly plugged in makes the battery last years longer'),
+                               status))
+    else:
+        parts.append(panel('Battery', label('No battery found', 'dim')))
+    parts.append(panel('Session',
+                       buttons(button('Lock', lambda: spawn('garden', 'lock')),
+                               button('Suspend', lambda: spawn('avalon', 'power', 'suspend')),
+                               button('Restart', lambda: spawn('avalon', 'power', 'reboot')),
+                               button('Turn off', lambda: spawn('avalon', 'power', 'off')))))
+    return parts
+
+
+LAYOUTS = [('gb', '', 'English (UK)'), ('ru', 'phonetic', 'Russian, phonetic (ЯЖЕРТЫ)'), ('ru', '', 'Russian (ЙЦУКЕН)'),
+           ('us', '', 'English (US)'), ('jp', '', 'Japanese'), ('de', '', 'German'), ('fr', '', 'French')]
+
+
+def page_keyboard(win):
+    status = label('', 'mint')
+    layouts = mango_get('xkb_rules_layout', 'gb,ru').split(',')
+    variants = (mango_get('xkb_rules_variant', '') + ',' * len(layouts)).split(',')[:len(layouts)]
+    current = list(zip(layouts, variants))
+    checks = []
+    col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    for lay, var, name in LAYOUTS:
+        c = Gtk.CheckButton(label=name, active=(lay, var) in current)
+        c.add_css_class('mint')
+        checks.append((c, lay, var))
+        col.append(c)
+
+    def apply():
+        chosen = [(l, v) for c, l, v in checks if c.get_active()] or [('gb', '')]
+        mango_set({'xkb_rules_layout': ','.join(l for l, _ in chosen),
+                   'xkb_rules_variant': ','.join(v for _, v in chosen)})
+        status.set_text('Keyboards: ' + ', '.join(n for c, l, v in checks for n in [c.get_label()] if c.get_active()))
+
+    rate = int(mango_get('repeat_rate', '30'))
+    delay = int(mango_get('repeat_delay', '400'))
+    return [
+        panel('Keyboards (Alt+Shift switches between them)', col, buttons(button('Use these', apply, accent=True)), status),
+        panel('Typing',
+              row('Repeat speed', slider(rate, 10, 60, lambda v: mango_set({'repeat_rate': v}), width=240), 'keys per second'),
+              row('Repeat after', slider(delay, 150, 800, lambda v: mango_set({'repeat_delay': v}), width=240), 'milliseconds')),
+        panel('Touchpad',
+              row('Tap to click', switch(mango_get('tap_to_click', '1') == '1', lambda on: mango_set({'tap_to_click': int(on)}))),
+              row('Natural scrolling', switch(mango_get('trackpad_natural_scrolling', '1') == '1',
+                                              lambda on: mango_set({'trackpad_natural_scrolling': int(on)}))),
+              row('Ignore it while typing', switch(mango_get('trackpad_disable_while_typing', '1') == '1',
+                                                   lambda on: mango_set({'trackpad_disable_while_typing': int(on)})))),
+    ]
+
+
+def page_neredy(win):
+    out = output_view('…')
+    later(lambda: run('neredy', 'check', timeout=20), lambda r: (out.text(r[1] or 'neredy isn’t installed yet'), True)[1])
+    voices = Gtk.DropDown.new_from_strings(['irina', 'denis', 'dmitri', 'ruslan'])
+    return [
+        panel('Her mind (the model)',
+              label('Small is quick on this laptop; large is the better Russian tutor but slower and uses most of the memory.', 'dim', wrap=True),
+              buttons(button('Small (Qwen3 4B, 2.5 GB)', lambda: in_terminal('neredy setup small'), accent=True),
+                      button('Large (Qwen3.6 35B-A3B, 22 GB)', lambda: in_terminal('neredy setup large')))),
+        panel('Her voice (Russian)',
+              row('Voice', voices),
+              buttons(button('Use this voice', lambda: in_terminal(f'neredy voice {voices.get_selected_item().get_string()}')),
+                      button('Hear it', lambda: spawn('neredy', 'say', 'Привет! Меня зовут Нереди.')))),
+        panel('Talk to her', buttons(button('Open Neredy', lambda: spawn('garden', 'neredy'), accent=True),
+                                     button('Stop her (frees the memory)', lambda: spawn('neredy', 'stop')))),
+        panel('neredy check', out),
+    ]
+
+
+def page_updates(win):
+    out = output_view('Checking which ports are newer than what’s installed…')
+    later(lambda: run('prt-get', 'diff', timeout=60),
+          lambda r: (out.text(r[1] if r[1] else 'Everything is up to date (as of the last sync).'), True)[1])
+    return [
+        panel('Avalon (CRUX and Avalon’s ports)',
+              label('Updates are built on this laptop, in a terminal so you can watch.', 'dim', wrap=True),
+              buttons(button('Update everything', lambda: in_terminal('sudo metamelayer upgrade'), accent=True),
+                      button('Fetch the latest ports', lambda: in_terminal('sudo metamelayer sync')))),
+        panel('Newer than what’s installed (prt-get diff)', out),
+    ]
+
+
+def page_gentoo(win):
+    g = Path('/var/lib/gentoo')
+    there = (g / 'usr/bin/emerge').exists()
+    mounted = any(' /var/lib/gentoo/' in l for l in open('/proc/mounts'))
+    size = run('du', '-sh', str(g), timeout=30)[1].split()[0] if there else '—'
+    pkg = Gtk.Entry(placeholder_text='a Gentoo package, e.g. app-editors/zed')
+    return [
+        panel('The escape hatch: Gentoo with Portage',
+              label('A whole Gentoo system kept in its own folder, for software CRUX doesn’t have. '
+                    'It can’t touch Avalon’s files. Docs: /usr/ports/avalon/docs/escape-hatch.md', 'dim', wrap=True),
+              row('Gentoo', label(('installed, ' + size) if there else 'not installed', 'value' if there else 'bad')),
+              row('Mounted', label('yes, until you reboot or unmount' if mounted else 'no', 'mint'))),
+        panel('Use it',
+              pkg,
+              buttons(button('Install it', lambda: in_terminal(f'sudo metamelayer gentoo emerge {pkg.get_text()}') if pkg.get_text() else None, accent=True),
+                      button('Run it', lambda: spawn('sh', '-c', f'sudo -n metamelayer gentoo run {pkg.get_text().split("/")[-1]}') if pkg.get_text() else None)),
+              buttons(button('Gentoo shell', lambda: in_terminal('sudo metamelayer gentoo')),
+                      button('Sync', lambda: in_terminal('sudo metamelayer gentoo sync')),
+                      button('Update Gentoo', lambda: in_terminal('sudo metamelayer gentoo update')),
+                      button('Unmount', lambda: in_terminal('sudo metamelayer gentoo unmount')))),
+    ]
+
+
+def about_text():
+    info = {}
+    try:
+        for line in Path('/etc/os-release').read_text().splitlines():
+            k, _, v = line.partition('=')
+            info[k] = v.strip('"')
+    except OSError:
+        pass
+    cpu = ''
+    try:
+        cpu = next(l.split(':', 1)[1].strip() for l in open('/proc/cpuinfo') if l.startswith('model name'))
+    except (OSError, StopIteration):
+        pass
+    mem = ''
+    try:
+        kb = int(next(l.split()[1] for l in open('/proc/meminfo') if l.startswith('MemTotal')))
+        mem = f'{kb / 1048576:.0f} GB'
+    except (OSError, StopIteration):
+        pass
+    gpu = run('sh', '-c', "lspci 2>/dev/null | grep -iE 'vga|display' | cut -d: -f3-")[1].strip()
+    disk = run('df', '-h', '/')[1].splitlines()[-1].split() if have('df') else []
+    rows = [
+        ('System', info.get('PRETTY_NAME', 'Avalon')),
+        ('Built on', 'CRUX 3.8'),
+        ('Kernel', os.uname().release),
+        ('Processor', cpu),
+        ('Graphics', gpu),
+        ('Memory', mem),
+        ('Disk', f'{disk[2]} used of {disk[1]}' if len(disk) > 3 else ''),
+        ('Desktop', 'the Garden System (MangoWC + Quickshell)'),
+    ]
+    return [(k, v) for k, v in rows if v]
+
+
+def page_about(win):
+    box = Gtk.Box(spacing=26)
+    if PORTRAIT.exists():
+        pic = Gtk.Picture.new_for_filename(str(PORTRAIT))
+        pic.set_size_request(220, 220)
+        box.append(pic)
+    grid = Gtk.Grid(column_spacing=24, row_spacing=8)
+    for i, (k, v) in enumerate(about_text()):
+        grid.attach(label(k, 'dim'), 0, i, 1, 1)
+        grid.attach(label(v, 'value', wrap=True), 1, i, 1, 1)
+    box.append(grid)
+    return [panel('Avalon 1 (Iskra)', box,
+                  label('Pasha keeps the garden. Avalon is CRUX, compiled into your own, with the Garden System on top.',
+                        'mint', wrap=True))]
+
+
+PAGES = [
+    ('appearance', 'Appearance', page_appearance),
+    ('display', 'Display', page_display),
+    ('sound', 'Sound', page_sound),
+    ('network', 'Network', page_network),
+    ('bluetooth', 'Bluetooth', page_bluetooth),
+    ('power', 'Power', page_power),
+    ('keyboard', 'Keyboard', page_keyboard),
+    ('neredy', 'Neredy', page_neredy),
+    ('updates', 'Updates', page_updates),
+    ('gentoo', 'Escape hatch', page_gentoo),
+    ('about', 'About', page_about),
+]
+
+
+# ---- the window -------------------------------------------------------------------------
+
+class Control(Gtk.ApplicationWindow):
+    def __init__(self, app, start):
+        super().__init__(application=app, title='Avalon Control')
+        self.set_default_size(1100, 760)
+        self.add_css_class('garden')
+        self.built = {}
+
+        root = Gtk.Box()
+        self.set_child(root)
+
+        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        side.add_css_class('sidebar')
+        side.set_size_request(250, -1)
+        title = label('AVALON CONTROL', 'heading', xalign=0.5)
+        side.append(title)
+        self.list = Gtk.ListBox()
+        self.list.add_css_class('tabs')
+        for i, (key, name, _f) in enumerate(PAGES):
+            h = Gtk.Box()
+            g = label(GLYPHS[i % 4], 'glyph', ['earth', 'water', 'wind', 'fire'][i % 4])
+            h.append(g)
+            h.append(label(name))
+            self.list.append(h)
+        self.list.connect('row-selected', self.show)
+        side.append(self.list)
+        root.append(side)
+
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right.set_hexpand(True)
+        self.plate = label('', 'plate')
+        self.plate.set_halign(Gtk.Align.START)
+        self.plate.set_margin_start(34)
+        self.plate.set_margin_top(22)
+        right.append(self.plate)
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_UP_DOWN, transition_duration=160)
+        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroll.set_child(self.stack)
+        right.append(scroll)
+        root.append(right)
+
+        keys = [k for k, _n, _f in PAGES]
+        self.list.select_row(self.list.get_row_at_index(keys.index(start) if start in keys else 0))
+
+    def show(self, _list, r):
+        if r is None:
+            return
+        key, name, build = PAGES[r.get_index()]
+        self.plate.set_text(name.upper())
+        if key not in self.built:
+            page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+            page.add_css_class('page')
+            try:
+                for w in build(self):
+                    page.append(w)
+            except Exception as e:   # one page failing shouldn't take the others with it
+                page.append(panel(name, label(f'This page couldn’t open: {e}', 'bad', wrap=True)))
+            self.stack.add_named(page, key)
+            self.built[key] = page
+        self.stack.set_visible_child_name(key)
+
+
+class App(Gtk.Application):
+    def __init__(self, start):
+        super().__init__(application_id='org.avalon.Control')
+        self.start = start
+
+    def do_activate(self):
+        css = Gtk.CssProvider()
+        try:
+            css.load_from_string(CSS)
+        except AttributeError:
+            css.load_from_data(CSS, -1)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        win = self.props.active_window or Control(self, self.start)
+        win.present()
+
+
+if __name__ == '__main__':
+    start = sys.argv[1] if len(sys.argv) > 1 else 'appearance'
+    if start in ('-h', '--help'):
+        print(__doc__)
+        sys.exit(0)
+    sys.exit(App(start).run([sys.argv[0]]))

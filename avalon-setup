@@ -132,6 +132,10 @@ fi
 ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1 && echo "    present" ||
 	echo "    still missing: Neredy will run on the processor (slower); 'neredy check' says more"
 
+# the battery charge limit chosen in Avalon Control, again at every boot
+grep -q 'charge-limit' /etc/rc.local ||
+	echo '[ -f /etc/avalon/charge-limit ] && /usr/sbin/avalon-power charge-limit "$(cat /etc/avalon/charge-limit)" 2>/dev/null' >> /etc/rc.local
+
 say "Services: D-Bus, seatd, NetworkManager, Bluetooth and the login screen"
 sed -i 's|^\(SERVICES=(.*\)\bnet\b|\1|' /etc/rc.conf   # NetworkManager takes over from CRUX's net
 for s in dbus seatd networkmanager bluetoothd greetd; do
