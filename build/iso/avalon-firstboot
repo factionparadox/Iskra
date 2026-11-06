@@ -112,7 +112,7 @@ while :; do
 		again  "Try again (it carries on from where it stopped)" \
 		log    "Read the log" \
 		online "Change the network" \
-		shell  "A shell (exit comes back here); Portage is there too: metamelayer gentoo" \
+		shell  "A shell (exit comes back here)" \
 		later  "Leave it for now (a normal login; avalon-firstboot carries on later)") || choice=later
 	case $choice in
 		log)    dialog --backtitle "$TITLE" --title " $LOG " --textbox $LOG "$(rows)" "$(cols)" ;;

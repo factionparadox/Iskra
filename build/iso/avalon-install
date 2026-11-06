@@ -4,8 +4,8 @@
 #   your username · which disk (from a list) · whether to erase it (yes/no) · your password ·
 #   root's password
 # then installs from the stick, with no internet and nothing compiled: CRUX's core, Gentoo's
-# prebuilt kernel (7.3) and current firmware, what the first boot needs, Gentoo with Portage (the
-# escape hatch), Avalon's ports, fstab, you, and GRUB. Wi-Fi is set up on the first boot, which then
+# prebuilt kernel (7.3) and current firmware, what the first boot needs, Avalon's ports, fstab,
+# you, and GRUB. Wi-Fi is set up on the first boot, which then
 # builds Avalon on the laptop.
 #
 # Run it again with  /media/avalon-install  (it skips what's done). To lay the disk out yourself,
@@ -146,16 +146,6 @@ steps() {
 	if [ -f "$MEDIA/avalon/neredy-model.gguf" ]; then
 		say "Neredy's model"
 		cp "$MEDIA/avalon/neredy-model.gguf" $ROOT/var/tmp/
-	fi
-
-	say "Gentoo, with Portage: the escape hatch"
-	if [ ! -x $ROOT/var/lib/gentoo/usr/bin/emerge ]; then
-		mkdir -p $ROOT/var/lib/gentoo
-		tar -xpf "$MEDIA"/avalon/gentoo/stage3-*.tar.xz -C $ROOT/var/lib/gentoo --numeric-owner
-		mkdir -p $ROOT/var/lib/gentoo/var/db/repos/gentoo
-		tar -xpf "$MEDIA"/avalon/gentoo/gentoo-latest.tar.xz -C $ROOT/var/lib/gentoo/var/db/repos/gentoo --strip-components=1
-		printf '\n# Avalon: prefer Gentoo'"'"'s prebuilt packages, compile only what has none\nFEATURES="${FEATURES} getbinpkg"\nMAKEOPTS="-j8"\n' \
-			>> $ROOT/var/lib/gentoo/etc/portage/make.conf
 	fi
 
 	say "/etc/fstab"

@@ -13,7 +13,6 @@ The first release is **Avalon 1 "Iskra"**.
 | Base | CRUX 3.8: pkgutils, ports, BSD-style init, no systemd |
 | Kernel | Gentoo's prebuilt distribution kernel (7.3), for the Panther Lake graphics, NPU and Wi-Fi 7 |
 | Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key |
-| Escape hatch | Gentoo with **Portage**, in its own root: `sudo metamelayer gentoo` |
 | Flatpak | Only for apps published nowhere else, such as Sober: `metamelayer flatpak install org.vinegarhq.Sober` |
 | Compositor | **MangoWC** (Wayland, dwl-based): tags, a Niri-style scroller, blur via scenefx |
 | Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, Command Mode, notifications, lock, login |
@@ -48,7 +47,7 @@ Make it on your own machine (Arch, or Arch on WSL), as root, from this repo:
 
 Nothing is compiled: it downloads and checks the official CRUX 3.8 ISO, Gentoo's prebuilt
 distribution kernel (Linux 7.3, which knows the Panther Lake graphics; CRUX 3.8's ISO has 6.12),
-current firmware, a Gentoo base system with Portage and Neredy's Russian voice, and writes
+current firmware and Neredy's Russian voice, and writes
 `avalon-1-iskra.iso`. `NEREDY_MODEL=small` puts Neredy's model on it too.
 
 ### On the laptop
@@ -57,7 +56,7 @@ current firmware, a Gentoo base system with Portage and Neredy's Russian voice, 
 2. The installer starts by itself, in large type, as menus like CRUX's own setup. It asks your
    username, your password and root's, which disk (from a list), and whether to erase it (yes or
    no). Then it installs from the stick, with no internet and nothing compiled, showing its
-   progress: CRUX's core, Gentoo's kernel and firmware, Gentoo with Portage, Avalon's ports,
+   progress: CRUX's core, Gentoo's prebuilt kernel and firmware, Avalon's ports,
    fstab, you, and GRUB with the Garden's boot screen.
 3. Restart (it offers to), taking the stick out. **The first start builds Avalon on the laptop**:
    it lists the Wi-Fi networks it can see and asks for the password (or use a cable), then builds
@@ -69,15 +68,11 @@ current firmware, a Gentoo base system with Portage and Neredy's Russian voice, 
 To lay the disk out yourself, open a shell on the stick (Alt+F2, log in as root), partition and
 mount it under `/mnt` (EFI at `/mnt/boot/efi`), and run `/media/avalon-install`: it uses that.
 
-### Portage, the escape hatch
+### Something CRUX doesn't have
 
-Gentoo lives in its own root, `/var/lib/gentoo`, so Portage and CRUX never overwrite each other.
-How it works, what it shares with Avalon and how to use it in an emergency:
-[docs/escape-hatch.md](docs/escape-hatch.md).
-
-    sudo metamelayer gentoo                 # a shell in Gentoo
-    sudo metamelayer gentoo emerge PACKAGE  # Gentoo's prebuilt packages where there are any
-    sudo metamelayer gentoo run PROGRAM     # run a Gentoo program on Avalon's desktop
+Write a Pkgfile for it in Avalon's ports (`/usr/ports/avalon/ports/NAME/Pkgfile`), the same way
+as the ones already there, then `sudo metamelayer sign NAME && sudo metamelayer install NAME`.
+For apps only published as Flatpaks (Sober, for one): `metamelayer flatpak install APP`.
 
 ### On an existing CRUX install instead
 

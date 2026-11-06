@@ -16,7 +16,6 @@ It uses the same tools you would by hand, so nothing is hidden and nothing is lo
 | Keyboard | layouts (Alt+Shift switches), key repeat, touchpad (Mango's settings) |
 | Neredy | her model (small or large), her voice, `neredy check` |
 | Updates | `metamelayer upgrade` and `sync`, in a terminal; what's newer (`prt-get diff`) |
-| Escape hatch | Gentoo's state; install or run a Gentoo package; shell, sync, update, unmount |
 | About | the system, kernel, processor, graphics, memory, disk |
 
 **Mango's settings.** Your changes go in `~/.config/mango/config.conf`: a copy of Avalon's
@@ -24,5 +23,5 @@ It uses the same tools you would by hand, so nothing is hidden and nothing is lo
 "Reset" on the Appearance page deletes your copy, so you're back to Avalon's defaults (and get any
 improvements to them that came with updates).
 
-Long jobs (updates, downloading Neredy's model, Gentoo) open in kitty, so you can watch them and
+Long jobs (updates, downloading Neredy's model) open in kitty, so you can watch them and
 answer `sudo`.

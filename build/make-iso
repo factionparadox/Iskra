@@ -5,7 +5,7 @@
 #     sudo NEREDY_MODEL=small build/make-iso  # also put Neredy's small model (~2.5 GB) on the disc
 #
 # Nothing is compiled here: it downloads and checks the official CRUX 3.8 ISO, Gentoo's
-# prebuilt kernel, current firmware, a Gentoo base system with Portage and Neredy's voice, packs
+# prebuilt kernel, current firmware and Neredy's voice, packs
 # the kernel and firmware as CRUX packages, and adds them, Avalon's ports and the installer to
 # the ISO: avalon-1-iskra.iso, here. Avalon itself is compiled on the laptop, on its first boot.
 # Downloads are kept in $WORK, so running it again only fetches what's new.
@@ -68,18 +68,6 @@ fresh https://cdn.kernel.org/pub/linux/kernel/firmware/sha256sums.asc firmware.s
 grep " $fw\$" firmware.sha256 | sha256sum -c
 fpkg="$WORK/pkgs/linux-firmware#$FIRMWARE-1.pkg.tar.xz"
 
-say "Gentoo, with Portage (the escape hatch)"
-fresh "$GENTOO/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt" stage3.txt
-s3=$(grep -m1 '^[0-9].*stage3-amd64-openrc-.*\.tar\.xz' stage3.txt | cut -d' ' -f1)
-[ -n "$s3" ] || die "can't find the latest stage3 in stage3.txt"
-get "$GENTOO/releases/amd64/autobuilds/$s3" "${s3##*/}"
-fresh "$GENTOO/releases/amd64/autobuilds/$s3.sha256" stage3.sha256
-grep " ${s3##*/}\$" stage3.sha256 | sha256sum -c
-ls stage3-amd64-openrc-*.tar.xz | grep -v "^${s3##*/}\$" | xargs -r rm -f
-fresh "$GENTOO/snapshots/gentoo-latest.tar.xz.md5sum" portage.md5
-rm -f gentoo-latest.tar.xz; get "$GENTOO/snapshots/gentoo-latest.tar.xz" gentoo-latest.tar.xz
-md5sum -c portage.md5
-
 say "Neredy's voice (Irina)"
 for x in ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json; do get "$PV/$x" "$x"; done
 if [ "${NEREDY_MODEL:-}" = small ]; then
@@ -116,14 +104,13 @@ ls -lh "$fpkg"
 
 say "Putting the disc together"
 OV=$WORK/overlay
-rm -rf "$OV"; mkdir -p "$OV/avalon/packages" "$OV/avalon/voices" "$OV/avalon/gentoo"
+rm -rf "$OV"; mkdir -p "$OV/avalon/packages" "$OV/avalon/voices"
 ln "$kpkg" "$fpkg" "$OV/avalon/packages/" 2>/dev/null || cp "$kpkg" "$fpkg" "$OV/avalon/packages/"
 git -c safe.directory='*' clone -q "$REPO" "$OV/avalon/repo"
 git -C "$OV/avalon/repo" remote set-url origin https://github.com/factionparadox/Iskra
 git -C "$OV/avalon/repo" log --oneline -1
 cp "$REPO/build/iso/avalon-install" "$OV/avalon-install"
 cp ru_RU-irina-medium.onnx ru_RU-irina-medium.onnx.json "$OV/avalon/voices/"
-cp "${s3##*/}" gentoo-latest.tar.xz "$OV/avalon/gentoo/"
 [ "${NEREDY_MODEL:-}" = small ] && cp neredy-model.gguf "$OV/avalon/"
 
 # the boot menu says Avalon

@@ -2,7 +2,7 @@
 """Avalon Control: Avalon's settings, in GTK4, dressed as the Garden System.
 
     avalon-control [PAGE]      PAGE: appearance display sound network bluetooth power keyboard
-                                     neredy updates gentoo about     (Super+, opens it)
+                                     neredy updates about            (Super+, opens it)
 
 It changes things with the same tools you would use by hand, so nothing is hidden:
   Mango's look and keyboard   ~/.config/mango/config.conf (a copy of /etc/mango/config.conf with
@@ -12,7 +12,7 @@ It changes things with the same tools you would use by hand, so nothing is hidde
   sound                       wpctl (PipeWire)
   network, Bluetooth          nmcli, bluetoothctl
   battery charge limit        sudo avalon-power charge-limit N
-  Neredy, updates, Gentoo     neredy, metamelayer (long jobs open in kitty, so you see them)
+  Neredy, updates             neredy, metamelayer (long jobs open in kitty, so you see them)
 """
 import os
 import re
@@ -574,29 +574,6 @@ def page_updates(win):
     ]
 
 
-def page_gentoo(win):
-    g = Path('/var/lib/gentoo')
-    there = (g / 'usr/bin/emerge').exists()
-    mounted = any(' /var/lib/gentoo/' in l for l in open('/proc/mounts'))
-    size = run('du', '-sh', str(g), timeout=30)[1].split()[0] if there else '—'
-    pkg = Gtk.Entry(placeholder_text='a Gentoo package, e.g. app-editors/zed')
-    return [
-        panel('The escape hatch: Gentoo with Portage',
-              label('A whole Gentoo system kept in its own folder, for software CRUX doesn’t have. '
-                    'It can’t touch Avalon’s files. Docs: /usr/ports/avalon/docs/escape-hatch.md', 'dim', wrap=True),
-              row('Gentoo', label(('installed, ' + size) if there else 'not installed', 'value' if there else 'bad')),
-              row('Mounted', label('yes, until you reboot or unmount' if mounted else 'no', 'mint'))),
-        panel('Use it',
-              pkg,
-              buttons(button('Install it', lambda: in_terminal(f'sudo metamelayer gentoo emerge {pkg.get_text()}') if pkg.get_text() else None, accent=True),
-                      button('Run it', lambda: spawn('sh', '-c', f'sudo -n metamelayer gentoo run {pkg.get_text().split("/")[-1]}') if pkg.get_text() else None)),
-              buttons(button('Gentoo shell', lambda: in_terminal('sudo metamelayer gentoo')),
-                      button('Sync', lambda: in_terminal('sudo metamelayer gentoo sync')),
-                      button('Update Gentoo', lambda: in_terminal('sudo metamelayer gentoo update')),
-                      button('Unmount', lambda: in_terminal('sudo metamelayer gentoo unmount')))),
-    ]
-
-
 def about_text():
     info = {}
     try:
@@ -657,7 +634,6 @@ PAGES = [
     ('keyboard', 'Keyboard', page_keyboard),
     ('neredy', 'Neredy', page_neredy),
     ('updates', 'Updates', page_updates),
-    ('gentoo', 'Escape hatch', page_gentoo),
     ('about', 'About', page_about),
 ]
 
