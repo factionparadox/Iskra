@@ -12,11 +12,11 @@ It uses the same tools you would by hand, so nothing is hidden and nothing is lo
 | Sound | speaker and microphone volume and mute (`wpctl`) |
 | Network | Wi-Fi on/off, networks, joining one (`nmcli`) |
 | Bluetooth | on/off, looking for devices, pairing, connecting, forgetting (`bluetoothctl`) |
-| Power | battery charge and health; the charge limit (`sudo avalon-power charge-limit N`, applied at every boot by `avalon-charge-limit.service`); lock, suspend, restart, off |
+| Power | battery charge and health; the charge limit (`sudo avalon-power charge-limit N`, kept for every boot); lock, suspend, restart, off |
 | Keyboard | layouts (Alt+Shift switches), key repeat, touchpad (Mango's settings) |
 | Neredy | her model (small or large), her voice, `neredy check` |
-| Updates | `metamelayer update` (build the newest image here, switch at the next restart) and `rollback`; `bootc status` |
-| Apps | Flatpaks from Flathub (install, remove, update); Fedora packages added on top; a Fedora box, and the Gentoo box with Portage |
+| Updates | `metamelayer upgrade` and `sync`, in a terminal; what's newer (`prt-get diff`) |
+| Escape hatch | Gentoo's state; install or run a Gentoo package; shell, sync, update, unmount |
 | About | the system, kernel, processor, graphics, memory, disk |
 
 **Mango's settings.** Your changes go in `~/.config/mango/config.conf`: a copy of Avalon's
@@ -24,5 +24,5 @@ It uses the same tools you would by hand, so nothing is hidden and nothing is lo
 "Reset" on the Appearance page deletes your copy, so you're back to Avalon's defaults (and get any
 improvements to them that came with updates).
 
-Long jobs (updates, downloading Neredy's model, Flatpaks, boxes) open in kitty, so you can watch them and
+Long jobs (updates, downloading Neredy's model, Gentoo) open in kitty, so you can watch them and
 answer `sudo`.

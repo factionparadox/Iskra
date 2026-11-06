@@ -1,15 +1,13 @@
 #!/bin/sh
 # avalon: Avalon's own commands.
 #   avalon power suspend|reboot|off     the session's power actions
-#   avalon update                       build and switch to the newest Avalon (Metamelayer)
-#   avalon rollback                     back to the previous system, at the next restart
+#   avalon update                       sync the ports and upgrade (Metamelayer)
 #   avalon neredy setup [small|large]   download a model for Neredy (see: neredy)
 #   avalon version
 case $1 in
-  power)    shift; exec avalon-power "$@" ;;
-  update)   exec sudo metamelayer update ;;
-  rollback) exec sudo metamelayer rollback ;;
-  neredy)   shift; exec neredy "$@" ;;
-  version)  . /usr/lib/os-release; echo "$PRETTY_NAME, on Fedora $VERSION_ID (Universal Blue)" ;;
-  *)        sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  power)   shift; exec sudo -n /usr/sbin/avalon-power "$@" ;;
+  update)  exec sudo metamelayer upgrade ;;
+  neredy)  shift; exec neredy "$@" ;;
+  version) cat /usr/share/avalon/release 2>/dev/null || echo "Avalon" ;;
+  *)       sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

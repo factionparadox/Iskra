@@ -1,0 +1,155 @@
+#!/bin/sh
+# avalon-setup: turn CRUX 3.8 into Avalon. As root:
+#
+#   avalon-setup YOURNAME             online: update the ports and build Avalon on this machine.
+#                                     Avalon's first boot runs this by itself; on any other CRUX:
+#                                       git clone https://github.com/factionparadox/Iskra /usr/ports/avalon
+#                                       /usr/ports/avalon/avalon-setup YOURNAME
+#   avalon-setup --offline YOURNAME   what the disc's installer runs: settings and your user only,
+#                                     nothing downloaded or built
+#
+# It switches on CRUX's contrib ports, adds Avalon's, makes your own signing key and signs
+# Avalon's ports with it, then builds and installs Avalon (Mango, Quickshell, kitty, greetd...)
+# with prt-get, showing every build. Packages the Avalon disc left in /var/cache/avalon/disc are
+# installed instead of compiled wherever they're still the current version. Safe to run again.
+set -e
+OFFLINE=; [ "${1:-}" = --offline ] && { OFFLINE=1; shift; }
+USER_NAME=${1:-}
+AVALON=/usr/ports/avalon
+DISC=/var/cache/avalon/disc
+
+say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+die()  { printf '\n\033[1;35mavalon-setup: %s\033[0m\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "run it as root"
+[ -f /etc/pkgadd.conf ] && command -v pkgadd >/dev/null || die "this isn't CRUX (no pkgutils)"
+[ -d "$AVALON/ports" ] || die "Avalon isn't at $AVALON: git clone https://github.com/factionparadox/Iskra $AVALON"
+[ -n "$USER_NAME" ] || die "say whose desktop it is: avalon-setup YOURNAME"
+home() { getent passwd "$USER_NAME" | cut -d: -f6; }
+
+say "Ports: CRUX's contrib (Wayland, greetd, PipeWire...) and Avalon's"
+[ -f /etc/ports/contrib.rsync.inactive ] && mv /etc/ports/contrib.rsync.inactive /etc/ports/contrib.rsync
+conf=/etc/prt-get.conf
+sed -i 's|^#[[:space:]]*prtdir /usr/ports/contrib|prtdir /usr/ports/contrib|' $conf
+grep -q '^prtdir /usr/ports/contrib' $conf || echo 'prtdir /usr/ports/contrib' >> $conf
+grep -q "^prtdir $AVALON/ports" $conf || echo "prtdir $AVALON/ports" >> $conf
+sed -i 's|^#[[:space:]]*runscripts.*|runscripts yes|' $conf
+grep -q '^runscripts yes' $conf || echo 'runscripts yes' >> $conf
+sed -i "s|^#\?[[:space:]]*export MAKEFLAGS=.*|export MAKEFLAGS=\"-j$(nproc)\"|" /etc/pkgmk.conf
+grep -q '^export MAKEFLAGS' /etc/pkgmk.conf || echo "export MAKEFLAGS=\"-j$(nproc)\"" >> /etc/pkgmk.conf
+
+say "Metamelayer, and your own key for Avalon's ports"
+install -m 755 "$AVALON/desktop/usr/bin/metamelayer" /usr/bin/metamelayer
+metamelayer key
+
+say "Name, clock, keyboard and languages"
+sed -i -e 's|^HOSTNAME=.*|HOSTNAME=avalon|' -e 's|^TIMEZONE=.*|TIMEZONE=Europe/London|' \
+	-e 's|^KEYMAP=.*|KEYMAP=uk|' /etc/rc.conf
+grep -q '^HOSTNAME=' /etc/rc.conf || echo 'HOSTNAME=avalon' >> /etc/rc.conf
+for l in en_GB ru_RU; do localedef -i $l -f UTF-8 $l.UTF-8 2>/dev/null || true; done
+echo 'export LANG=en_GB.UTF-8' > /etc/profile.d/avalon-locale.sh
+install -m 644 "$AVALON/desktop/usr/share/avalon/os-release" /etc/os-release
+
+say "$USER_NAME: groups for sound, video, input and sudo"
+if ! id "$USER_NAME" >/dev/null 2>&1; then
+	useradd -m -s /bin/bash "$USER_NAME"
+	echo "    Choose the password you'll log in with as $USER_NAME:"
+	passwd "$USER_NAME"
+fi
+for g in wheel video audio input seat; do
+	getent group $g >/dev/null || groupadd $g
+	usermod -aG $g "$USER_NAME"
+done
+
+if [ -f /usr/share/avalon/voices/ru_RU-irina-medium.onnx ]; then
+	say "Neredy's voice (Irina), from the disc"
+	v=$(home)/.local/share/neredy/voices
+	install -d "$v"
+	cp /usr/share/avalon/voices/ru_RU-irina-medium.onnx* "$v/"
+	ln -sf ru_RU-irina-medium.onnx "$v/current.onnx"
+	ln -sf ru_RU-irina-medium.onnx.json "$v/current.onnx.json"
+	chown -R "$USER_NAME:" "$(home)/.local"
+	rm -rf /usr/share/avalon/voices
+fi
+if [ -f /var/tmp/neredy-model.gguf ]; then
+	say "Neredy's model, from the disc"
+	m=$(home)/.local/share/neredy/models
+	install -d "$m" && mv /var/tmp/neredy-model.gguf "$m/" && ln -sf neredy-model.gguf "$m/current.gguf"
+	chown -R "$USER_NAME:" "$(home)/.local"
+fi
+
+if [ -n "$OFFLINE" ]; then
+	say "Settings done; Avalon itself is built on the first boot"
+	exit 0
+fi
+
+say "CRUX's ports, brought up to date"
+ports -u
+metamelayer sign
+
+# everything Avalon needs, in the order it has to be built
+closure() { l=$(prt-get quickdep avalon); case " $l " in *" avalon "*) ;; *) l="$l avalon" ;; esac; echo $l; }
+scripts() {  # the port's pre/post-install scripts, for a package added with pkgadd
+	d=$(prt-get path "$1" 2>/dev/null) || return 0
+	[ -f "$d/$2" ] && { sh "$d/$2" || echo "    ($1's $2 complained; carrying on)"; }
+	return 0
+}
+
+if [ -d "$DISC" ]; then
+	say "From the disc: packages that are still the current version (no need to compile them)"
+	for p in $(closure); do
+		prt-get isinst "$p" >/dev/null 2>&1 && continue
+		v=$(prt-get info "$p" | awk '/^Version:/ {v=$2} /^Release:/ {r=$2} END {print v "-" r}')
+		f=$(ls "$DISC/$p#$v".pkg.tar.* 2>/dev/null | head -1)
+		[ -n "$f" ] || continue
+		echo "    $p $v"
+		scripts "$p" pre-install
+		pkgadd "$f"
+		scripts "$p" post-install
+	done
+fi
+
+say "Bringing older packages Avalon needs up to date"
+old=" $(prt-get quickdiff) "
+for p in $(closure); do
+	case "$old" in *" $p "*) say "update: $p"; prt-get update "$p" ;; esac
+done
+
+say "Building the rest of Avalon (the long part: Mango, Quickshell, greetd and what they need)"
+prt-get depinst avalon
+
+say "Anything an update left broken"
+broken=" $(revdep 2>/dev/null | tr '\n' ' ') "
+for p in $(closure); do
+	case "$broken" in *" $p "*) say "rebuild: $p"; prt-get update -fr "$p" ;; esac
+done
+
+say "The Intel graphics for Neredy (Mesa's Vulkan driver)"
+if ! ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1; then
+	echo "    missing: Mesa was built before the Vulkan loader was here, so it's rebuilt now"
+	prt-get update -fr mesa
+fi
+ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1 && echo "    present" ||
+	echo "    still missing: Neredy will run on the processor (slower); 'neredy check' says more"
+
+# the battery charge limit chosen in Avalon Control, again at every boot
+grep -q 'charge-limit' /etc/rc.local ||
+	echo '[ -f /etc/avalon/charge-limit ] && /usr/sbin/avalon-power charge-limit "$(cat /etc/avalon/charge-limit)" 2>/dev/null' >> /etc/rc.local
+
+say "Services: D-Bus, seatd, NetworkManager, Bluetooth and the login screen"
+sed -i 's|^\(SERVICES=(.*\)\bnet\b|\1|' /etc/rc.conf   # NetworkManager takes over from CRUX's net
+for s in dbus seatd networkmanager bluetoothd greetd; do
+	grep -q "SERVICES=.*\b$s\b" /etc/rc.conf || sed -i "s|^SERVICES=(\(.*\))|SERVICES=(\1 $s)|" /etc/rc.conf
+done
+grep '^SERVICES=' /etc/rc.conf
+usermod -aG seat "$USER_NAME"
+getent passwd greeter >/dev/null && usermod -aG video,input,seat greeter
+
+[ -e "$(home)/.local/share/neredy/voices/current.onnx" ] ||
+	su - "$USER_NAME" -c 'neredy voice irina' || echo "    the voice can come later: neredy voice"
+
+rm -rf "$DISC"
+say "Done. Reboot: the Garden System's login screen will greet you."
+[ -f "$(home)/.local/share/neredy/models/current.gguf" ] ||
+	echo "   Neredy needs a model once:  neredy setup small   (or: large, for the best Russian tutor)"
+echo "   Later: 'sudo metamelayer upgrade' to update, 'avalon' for Avalon's own commands."

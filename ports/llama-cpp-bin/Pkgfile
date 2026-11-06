@@ -1,0 +1,21 @@
+# Description: llama.cpp, the local model runtime Neredy runs on (its own ready-made Vulkan build)
+# URL: https://github.com/ggml-org/llama.cpp
+# Maintainer: Avalon
+# Depends on: vulkan-loader curl
+
+name=llama-cpp-bin
+version=b11960
+release=1
+source=(https://github.com/ggml-org/llama.cpp/releases/download/$version/llama-$version-bin-ubuntu-vulkan-x64.tar.gz)
+
+build() {
+  # nothing compiled: it carries a CPU part for every x86-64 processor and picks the best when it
+  # starts, and uses the Intel graphics through Vulkan. Its programs find their libraries beside
+  # them, so it lives in /opt/llama.cpp, its programs linked into /usr/bin.
+  install -d $PKG/opt $PKG/usr/bin
+  cp -a llama-$version $PKG/opt/llama.cpp
+  for f in $PKG/opt/llama.cpp/llama*; do
+    case $f in *.so*) ;; *) [ -x "$f" ] && ln -s /opt/llama.cpp/${f##*/} $PKG/usr/bin/${f##*/} ;; esac
+  done
+  rm -f $PKG/opt/llama.cpp/LICENSE*
+}

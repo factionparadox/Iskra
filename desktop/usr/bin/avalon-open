@@ -11,5 +11,5 @@ case $1 in
   vpn)     for p in protonvpn-app protonvpn; do have $p && run $p; done ;;
   *)       echo "usage: avalon-open web|discord|video|files|anime|vpn" >&2; exit 2 ;;
 esac
-notify-send -a Avalon "Nothing installed for '$1'" "Add one with:  metamelayer add …  (or metamelayer flatpak install …)" 2>/dev/null
+notify-send -a Avalon "Nothing installed for '$1'" "Install one with:  metamelayer install …" 2>/dev/null
 exit 1

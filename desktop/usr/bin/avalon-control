@@ -2,7 +2,7 @@
 """Avalon Control: Avalon's settings, in GTK4, dressed as the Garden System.
 
     avalon-control [PAGE]      PAGE: appearance display sound network bluetooth power keyboard
-                                     neredy updates apps about       (Super+, opens it)
+                                     neredy updates gentoo about     (Super+, opens it)
 
 It changes things with the same tools you would use by hand, so nothing is hidden:
   Mango's look and keyboard   ~/.config/mango/config.conf (a copy of /etc/mango/config.conf with
@@ -12,7 +12,7 @@ It changes things with the same tools you would use by hand, so nothing is hidde
   sound                       wpctl (PipeWire)
   network, Bluetooth          nmcli, bluetoothctl
   battery charge limit        sudo avalon-power charge-limit N
-  Neredy, updates, Flatpaks   neredy, metamelayer (bootc, flatpak, distrobox; long jobs open in kitty)
+  Neredy, updates, Gentoo     neredy, metamelayer (long jobs open in kitty, so you see them)
 """
 import os
 import re
@@ -487,7 +487,7 @@ def page_power(win):
                            row('Health', label(health or 'unknown', 'mint'))))
         if b['limit']:
             def set_limit(v):
-                ok, out = run('sudo', '-n', '/usr/bin/avalon-power', 'charge-limit', str(v))
+                ok, out = run('sudo', '-n', '/usr/sbin/avalon-power', 'charge-limit', str(v))
                 status.set_text(f'Charges to {v}%' if ok else out)
             parts.append(panel('Looking after the battery',
                                row('Stop charging at', slider(int(b['limit']), 50, 100, set_limit, width=260),
@@ -562,45 +562,38 @@ def page_neredy(win):
 
 
 def page_updates(win):
-    out = output_view('Asking bootc which system is running…')
-    later(lambda: run('bootc', 'status', timeout=30),
-          lambda r: (out.text(r[1] or 'bootc isn’t answering'), True)[1])
+    out = output_view('Checking which ports are newer than what’s installed…')
+    later(lambda: run('prt-get', 'diff', timeout=60),
+          lambda r: (out.text(r[1] if r[1] else 'Everything is up to date (as of the last sync).'), True)[1])
     return [
-        panel('Avalon',
-              label('Avalon is an image: each update builds a new one here, from Avalon’s repository, and '
-                    'switches to it at the next restart. The one before stays a restart away.', 'dim', wrap=True),
-              buttons(button('Update', lambda: in_terminal('sudo metamelayer update'), accent=True),
-                      button('Go back to the previous one', lambda: in_terminal('sudo metamelayer rollback')),
-                      button('Restart now', lambda: spawn('avalon-power', 'reboot')))),
-        panel('Running and staged (bootc status)', out),
+        panel('Avalon (CRUX and Avalon’s ports)',
+              label('Updates are built on this laptop, in a terminal so you can watch.', 'dim', wrap=True),
+              buttons(button('Update everything', lambda: in_terminal('sudo metamelayer upgrade'), accent=True),
+                      button('Fetch the latest ports', lambda: in_terminal('sudo metamelayer sync')))),
+        panel('Newer than what’s installed (prt-get diff)', out),
     ]
 
 
-def page_apps(win):
-    status = label('', 'mint')
-    app = Gtk.Entry(placeholder_text='a Flathub app, e.g. org.vinegarhq.Sober')
-    out = output_view('…')
-    later(lambda: run('flatpak', 'list', '--app', '--columns=name,application', timeout=30),
-          lambda r: (out.text(r[1] or 'No Flatpaks yet.'), True)[1])
-    pkg = Gtk.Entry(placeholder_text='a Fedora package, e.g. htop')
+def page_gentoo(win):
+    g = Path('/var/lib/gentoo')
+    there = (g / 'usr/bin/emerge').exists()
+    mounted = any(' /var/lib/gentoo/' in l for l in open('/proc/mounts'))
+    size = run('du', '-sh', str(g), timeout=30)[1].split()[0] if there else '—'
+    pkg = Gtk.Entry(placeholder_text='a Gentoo package, e.g. app-editors/zed')
     return [
-        panel('Flatpaks (Flathub)',
-              label('For apps only published as Flatpaks, like Sober. Everything else is native.', 'dim', wrap=True),
-              app,
-              buttons(button('Install', lambda: in_terminal(f'metamelayer flatpak install {app.get_text()}') if app.get_text() else status.set_text('Which app?'), accent=True),
-                      button('Remove', lambda: in_terminal(f'metamelayer flatpak remove {app.get_text()}') if app.get_text() else status.set_text('Which app?')),
-                      button('Update all', lambda: in_terminal('metamelayer flatpak update'))),
-              status, out),
-        panel('Fedora packages, added on top',
-              label('Quick extras, layered on the image (they arrive at the next restart). '
-                    'For good, add them to build/image/packages in Avalon’s repository.', 'dim', wrap=True),
+        panel('The escape hatch: Gentoo with Portage',
+              label('A whole Gentoo system kept in its own folder, for software CRUX doesn’t have. '
+                    'It can’t touch Avalon’s files. Docs: /usr/ports/avalon/docs/escape-hatch.md', 'dim', wrap=True),
+              row('Gentoo', label(('installed, ' + size) if there else 'not installed', 'value' if there else 'bad')),
+              row('Mounted', label('yes, until you reboot or unmount' if mounted else 'no', 'mint'))),
+        panel('Use it',
               pkg,
-              buttons(button('Add', lambda: in_terminal(f'sudo metamelayer add {pkg.get_text()}') if pkg.get_text() else None, accent=True),
-                      button('Remove', lambda: in_terminal(f'sudo metamelayer drop {pkg.get_text()}') if pkg.get_text() else None))),
-        panel('Boxes: a whole other system, for trying things',
-              label('distrobox containers share your home but can’t touch Avalon. Gentoo’s has Portage.', 'dim', wrap=True),
-              buttons(button('Fedora box', lambda: in_terminal('metamelayer box')),
-                      button('Gentoo box (Portage)', lambda: in_terminal('metamelayer gentoo')))),
+              buttons(button('Install it', lambda: in_terminal(f'sudo metamelayer gentoo emerge {pkg.get_text()}') if pkg.get_text() else None, accent=True),
+                      button('Run it', lambda: spawn('sh', '-c', f'sudo -n metamelayer gentoo run {pkg.get_text().split("/")[-1]}') if pkg.get_text() else None)),
+              buttons(button('Gentoo shell', lambda: in_terminal('sudo metamelayer gentoo')),
+                      button('Sync', lambda: in_terminal('sudo metamelayer gentoo sync')),
+                      button('Update Gentoo', lambda: in_terminal('sudo metamelayer gentoo update')),
+                      button('Unmount', lambda: in_terminal('sudo metamelayer gentoo unmount')))),
     ]
 
 
@@ -627,7 +620,7 @@ def about_text():
     disk = run('df', '-h', '/')[1].splitlines()[-1].split() if have('df') else []
     rows = [
         ('System', info.get('PRETTY_NAME', 'Avalon')),
-        ('Built on', f"Fedora {info.get('VERSION_ID', '')} (Universal Blue), image-based"),
+        ('Built on', 'CRUX 3.8'),
         ('Kernel', os.uname().release),
         ('Processor', cpu),
         ('Graphics', gpu),
@@ -650,7 +643,7 @@ def page_about(win):
         grid.attach(label(v, 'value', wrap=True), 1, i, 1, 1)
     box.append(grid)
     return [panel('Avalon 1 (Iskra)', box,
-                  label('Pasha keeps the garden. Avalon is a Fedora image, built on this laptop, with the Garden System on top.',
+                  label('Pasha keeps the garden. Avalon is CRUX, compiled into your own, with the Garden System on top.',
                         'mint', wrap=True))]
 
 
@@ -664,7 +657,7 @@ PAGES = [
     ('keyboard', 'Keyboard', page_keyboard),
     ('neredy', 'Neredy', page_neredy),
     ('updates', 'Updates', page_updates),
-    ('apps', 'Apps', page_apps),
+    ('gentoo', 'Escape hatch', page_gentoo),
     ('about', 'About', page_about),
 ]
 

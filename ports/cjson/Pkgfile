@@ -1,0 +1,20 @@
+# Description: Ultralightweight JSON parser in ANSI C (Mango's IPC needs it)
+# URL: https://github.com/DaveGamble/cJSON
+# Maintainer: Avalon
+# Depends on: cmake
+
+name=cjson
+version=1.7.19
+release=1
+source=(https://github.com/DaveGamble/cJSON/archive/v$version/cJSON-$version.tar.gz)
+
+build() {
+  cmake -S cJSON-$version -B build -G Ninja \
+    -D CMAKE_INSTALL_PREFIX=/usr \
+    -D CMAKE_INSTALL_LIBDIR=lib \
+    -D CMAKE_BUILD_TYPE=Release \
+    -D ENABLE_CJSON_TEST=OFF \
+    -D BUILD_SHARED_AND_STATIC_LIBS=OFF
+  cmake --build build
+  DESTDIR=$PKG cmake --install build
+}
