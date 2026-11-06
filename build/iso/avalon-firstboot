@@ -108,14 +108,18 @@ while :; do
 	{ /usr/ports/avalon/avalon-setup "$USER_NAME"; echo $? > /run/avalon-firstboot.rc; } 2>&1 | tee -a $LOG |
 		dialog --backtitle "$TITLE" --title " Building Avalon (log: $LOG) " --progressbox "$(rows)" "$(cols)"
 	[ "$(cat /run/avalon-firstboot.rc 2>/dev/null)" = 0 ] && break
-	choice=$(d --title " The build stopped " --no-cancel --menu "\n\Z1Something didn't build.\Zn The last lines:\n\n$(tail -6 $LOG | cut -c1-70)\n" 22 78 5 \
+	pkglog=$(ls -t /var/log/pkgbuild/*.log 2>/dev/null | head -1)
+	what=${pkglog:+$(basename "$pkglog" .log)}
+	choice=$(d --title " The build stopped " --no-cancel --menu "\n\Z1${what:-Something} didn't build.\Zn Its last lines:\n\n$(tail -6 "${pkglog:-$LOG}" | cut -c1-70)\n" 22 78 6 \
 		again  "Try again (it carries on from where it stopped)" \
-		log    "Read the log" \
+		pkglog "Read ${what:-the package}'s build log (${pkglog:-none yet})" \
+		log    "Read the whole first-start log" \
 		online "Change the network" \
 		shell  "A shell (exit comes back here)" \
 		later  "Leave it for now (a normal login; avalon-firstboot carries on later)") || choice=later
 	case $choice in
 		log)    dialog --backtitle "$TITLE" --title " $LOG " --textbox $LOG "$(rows)" "$(cols)" ;;
+		pkglog) [ -n "$pkglog" ] && dialog --backtitle "$TITLE" --title " $pkglog " --textbox "$pkglog" "$(rows)" "$(cols)" ;;
 		online) pkill -x dhcpcd; get_online ;;
 		shell)  clear; echo "The log is $LOG. Type exit to come back."; bash -l ;;
 		later)  clear; echo "Type  avalon-firstboot  to carry on."; exit 0 ;;

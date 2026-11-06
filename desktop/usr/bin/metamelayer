@@ -14,6 +14,8 @@
 #                                  its Pkgfile's "Depends on" line misses
 #   metamelayer check [NAME...]    packages with a library missing (broken by an update)
 #   metamelayer fix                rebuild the broken ones (once each), then check again
+#   metamelayer log [NAME]         a package's build log (/var/log/pkgbuild/NAME.log); without a
+#                                  name, the most recent build's
 #   metamelayer arch NAME...       before building: what Arch Linux (or the AUR) says NAME needs to
 #                                  run and to build, matched to CRUX's ports, and what's missing
 #   metamelayer key                make your own signing key for Avalon's ports (once)
@@ -105,11 +107,20 @@ arch_check() {   # Avalon's own ports among the names: what Arch says they need 
 	return 0
 }
 
+LOGS=/var/log/pkgbuild
+failed_log() {   # the newest build log, which is the one that just stopped: its last lines
+	newest=$(ls -t "$LOGS"/*.log 2>/dev/null | head -1)
+	[ -n "$newest" ] || return 0
+	say "The build that stopped: $newest (all of it: metamelayer log $(basename "$newest" .log))"
+	tail -n 25 "$newest" | sed 's/^/    /'
+}
+
 with_check() {   # run a prt-get command, then check what it changed and fix what broke
 	before=$(mktemp)
 	installed > "$before"
 	status=0
 	prt-get "$@" || status=$?
+	[ $status = 0 ] || failed_log
 	changed=$(installed | comm -13 "$before" - | cut -d' ' -f1)
 	rm -f "$before"
 	if [ -n "$changed" ]; then
@@ -122,7 +133,7 @@ with_check() {   # run a prt-get command, then check what it changed and fix wha
 	return $status
 }
 
-[ $# -ge 1 ] || { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd=$1; shift
 case $cmd in
 	sync)            root sync; sync_ports ;;
@@ -139,6 +150,9 @@ case $cmd in
 	                 # shellcheck disable=SC2086
 	                 python3 "$DEPS" explain $broken; exit 1 ;;
 	fix)             root fix; fix ;;
+	log)             if [ $# -gt 0 ]; then f=$LOGS/$1.log; else f=$(ls -t "$LOGS"/*.log 2>/dev/null | head -1); fi
+	                 [ -n "$f" ] && [ -f "$f" ] || die "no build log${1:+ for $1} (in $LOGS)"
+	                 exec "${PAGER:-less}" "$f" ;;
 	arch)            [ $# -gt 0 ] || die "arch: which packages?"; exec python3 "$DEPS" arch "$@" ;;
 	key)             make_key ;;
 	sign)            root sign; sign_ports "$@" ;;

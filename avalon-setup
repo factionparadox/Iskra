@@ -35,6 +35,13 @@ grep -q '^prtdir /usr/ports/contrib' $conf || echo 'prtdir /usr/ports/contrib' >
 grep -q "^prtdir $AVALON/ports" $conf || echo "prtdir $AVALON/ports" >> $conf
 sed -i 's|^#[[:space:]]*runscripts.*|runscripts yes|' $conf
 grep -q '^runscripts yes' $conf || echo 'runscripts yes' >> $conf
+# every package's build in its own log, kept even when it works: /var/log/pkgbuild/NAME.log
+mkdir -p /var/log/pkgbuild
+for opt in 'writelog enabled' 'logmode overwrite' 'rmlog_on_success no' 'logfile /var/log/pkgbuild/%n.log'; do
+	key=${opt%% *}
+	sed -i "/^#*[[:space:]]*${key}[[:space:]]/d" $conf
+	echo "$opt" >> $conf
+done
 sed -i "s|^#\?[[:space:]]*export MAKEFLAGS=.*|export MAKEFLAGS=\"-j$(nproc)\"|" /etc/pkgmk.conf
 grep -q '^export MAKEFLAGS' /etc/pkgmk.conf || echo "export MAKEFLAGS=\"-j$(nproc)\"" >> /etc/pkgmk.conf
 
