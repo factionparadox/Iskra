@@ -12,7 +12,7 @@ The first release is **Avalon 1 "Iskra"**.
 |---|---|
 | Base | CRUX 3.8: pkgutils, ports, BSD-style init, no systemd |
 | Kernel | Gentoo's prebuilt distribution kernel (7.3), for the Panther Lake graphics, NPU and Wi-Fi 7 |
-| Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key |
+| Packages | **Metamelayer**, Avalon's package manager, over prt-get and pkgutils, with your own signing key. Like NuTyX's CARDS, it reads the libraries each program loads: it says when a Pkgfile misses a dependency, and rebuilds whatever an update broke (`metamelayer deps`, `check`, `fix`) |
 | Flatpak | Only for apps published nowhere else, such as Sober: `metamelayer flatpak install org.vinegarhq.Sober` |
 | Compositor | **MangoWC** (Wayland, dwl-based): tags, a Niri-style scroller, blur via scenefx |
 | Shell | **The Garden System**, in Quickshell: HUD, star system, launcher, Command Mode, notifications, lock, login |

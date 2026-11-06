@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""metamelayer-deps: what installed packages actually need, read from their programs.
+
+Like NuTyX's CARDS, it doesn't trust the "# Depends on:" lines alone: it opens every program and
+library a package installed, reads the shared libraries each one asks for (the ELF dynamic
+section: DT_NEEDED, with RPATH/RUNPATH), finds the file the system would load for each, and the
+package that owns that file (from pkgutils' database).
+
+    metamelayer-deps deps  NAME...   each package's runtime dependencies, as found; and what its
+                                     Pkgfile's "Depends on" misses (CRUX leaves core out of those
+                                     lines, so core packages aren't counted as missing)
+    metamelayer-deps check [NAME...] packages with a library that can't be found: broken, usually
+                                     by an update to a library they were built against. Prints
+                                     their names, one per line, in an order to rebuild them in;
+                                     exits 1 if there are any
+    metamelayer-deps explain NAME    for each broken file in a package: which library is missing
+
+Runtime dependencies found by `deps` are kept in /var/lib/avalon/rdeps/NAME.
+Only reads: it never changes the system (metamelayer does the rebuilding).
+"""
+import os
+import re
+import struct
+import subprocess
+import sys
+
+DB = os.environ.get('METAMELAYER_DB', '/var/lib/pkg/db')
+RDEPS = os.environ.get('METAMELAYER_RDEPS', '/var/lib/avalon/rdeps')
+DEFAULT_DIRS = ['/lib', '/usr/lib', '/lib64', '/usr/lib64']
+
+# ---- ELF: just enough to read the dynamic section -----------------------------------------
+
+DT_NEEDED, DT_STRTAB, DT_RPATH, DT_RUNPATH = 1, 5, 15, 29
+PT_LOAD, PT_DYNAMIC = 1, 2
+
+
+def elf_needs(path):
+    """(needed sonames, search dirs from RPATH/RUNPATH, elf class) or None if not a dynamic ELF"""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(64)
+            if len(head) < 52 or head[:4] != b'\x7fELF':
+                return None
+            cls, data = head[4], head[5]
+            end = '<' if data == 1 else '>'
+            if cls == 2:
+                phoff, = struct.unpack_from(end + 'Q', head, 32)
+                phentsize, phnum = struct.unpack_from(end + 'HH', head, 54)
+                phfmt, dynfmt = end + 'IIQQQQQQ', end + 'qQ'
+            elif cls == 1:
+                phoff, = struct.unpack_from(end + 'I', head, 28)
+                phentsize, phnum = struct.unpack_from(end + 'HH', head, 42)
+                phfmt, dynfmt = end + 'IIIIIIII', end + 'iI'
+            else:
+                return None
+            f.seek(phoff)
+            ph = f.read(phentsize * phnum)
+            loads, dyn = [], None
+            for i in range(phnum):
+                e = struct.unpack_from(phfmt, ph, i * phentsize)
+                if cls == 2:
+                    p_type, _flags, p_offset, p_vaddr, _pa, p_filesz, _memsz, _align = e
+                else:
+                    p_type, p_offset, p_vaddr, _pa, p_filesz, _memsz, _flags, _align = e
+                if p_type == PT_LOAD:
+                    loads.append((p_vaddr, p_offset, p_filesz))
+                elif p_type == PT_DYNAMIC:
+                    dyn = (p_offset, p_filesz)
+            if not dyn:
+                return None                       # static, or not a program/library
+            f.seek(dyn[0])
+            raw = f.read(dyn[1])
+            step = struct.calcsize(dynfmt)
+            needed, rpath, runpath, strtab = [], None, None, None
+            for i in range(0, len(raw) - step + 1, step):
+                tag, val = struct.unpack_from(dynfmt, raw, i)
+                if tag == 0:
+                    break
+                if tag == DT_NEEDED:
+                    needed.append(val)
+                elif tag == DT_STRTAB:
+                    strtab = val
+                elif tag == DT_RPATH:
+                    rpath = val
+                elif tag == DT_RUNPATH:
+                    runpath = val
+            if strtab is None:
+                return None
+            off = next((o + strtab - v for v, o, s in loads if v <= strtab < v + s), None)
+            if off is None:
+                return None
+
+            def string(i):
+                f.seek(off + i)
+                b = f.read(4096)
+                return b[:b.index(b'\0')].decode('utf-8', 'replace') if b'\0' in b else b.decode('utf-8', 'replace')
+            dirs = []
+            for p in (runpath if runpath is not None else rpath,):
+                if p is not None:
+                    origin = os.path.dirname(os.path.realpath(path))
+                    for d in string(p).split(':'):
+                        if d:
+                            dirs.append(d.replace('$ORIGIN', origin).replace('${ORIGIN}', origin))
+            return [string(n) for n in needed], dirs, cls
+    except (OSError, struct.error, ValueError):
+        return None
+
+
+# ---- the system: who owns what, where libraries are ---------------------------------------
+
+def read_db():
+    owner, files = {}, {}
+    try:
+        text = open(DB, encoding='utf-8', errors='replace').read()
+    except OSError:
+        sys.exit(f'metamelayer-deps: can\'t read {DB} (is this CRUX?)')
+    for block in text.split('\n\n'):
+        lines = block.strip('\n').split('\n')
+        if len(lines) < 2:
+            continue
+        name = lines[0]
+        fl = ['/' + l for l in lines[2:] if l and not l.endswith('/')]
+        files[name] = fl
+        for p in fl:
+            owner.setdefault(p, name)
+    return owner, files
+
+
+def ld_cache():
+    """soname → paths, from the dynamic linker's cache (and the default directories)"""
+    cache = {}
+    try:
+        out = subprocess.run(['ldconfig', '-p'], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            m = re.match(r'\s+(\S+) \(([^)]*)\) => (\S+)', line)
+            if m:
+                cache.setdefault(m.group(1), []).append((m.group(3), 'x86-64' in m.group(2)))
+    except OSError:
+        pass
+    return cache
+
+
+class System:
+    def __init__(self):
+        self.owner, self.files = read_db()
+        self.cache = ld_cache()
+
+    def find(self, soname, dirs, cls):
+        if '/' in soname:
+            return soname if os.path.exists(soname) else None
+        for d in dirs:
+            p = os.path.join(d, soname)
+            if os.path.exists(p):
+                return p
+        for p, is64 in self.cache.get(soname, []):
+            if is64 == (cls == 2) and os.path.exists(p):
+                return p
+        for d in DEFAULT_DIRS:
+            p = os.path.join(d, soname)
+            if os.path.exists(p):
+                return p
+        return None
+
+    def owner_of(self, path):
+        o = self.owner.get(path)
+        if o is None:
+            o = self.owner.get(os.path.realpath(path))
+        return o
+
+    def scan(self, name):
+        """(runtime deps, {file: [missing sonames]}) for an installed package"""
+        deps, broken = set(), {}
+        for p in self.files.get(name, []):
+            if not os.path.isfile(p) or os.path.islink(p):
+                continue
+            r = elf_needs(p)
+            if r is None:
+                continue
+            needed, dirs, cls = r
+            for so in needed:
+                lib = self.find(so, dirs, cls)
+                if lib is None:
+                    broken.setdefault(p, []).append(so)
+                    continue
+                o = self.owner_of(lib)
+                if o and o != name:
+                    deps.add(o)
+        return deps, broken
+
+
+# ---- ports: what the Pkgfiles say ---------------------------------------------------------
+
+def prtdirs():
+    dirs = []
+    try:
+        for line in open('/etc/prt-get.conf'):
+            m = re.match(r'\s*prtdir\s+(\S+)', line)
+            if m:
+                dirs.append(m.group(1).split(':')[0])
+    except OSError:
+        pass
+    return dirs or ['/usr/ports/core', '/usr/ports/opt', '/usr/ports/xorg', '/usr/ports/contrib']
+
+
+def declared(name):
+    for d in prtdirs():
+        f = os.path.join(d, name, 'Pkgfile')
+        if os.path.isfile(f):
+            for line in open(f, encoding='utf-8', errors='replace'):
+                m = re.match(r'#\s*Depends on:\s*(.*)', line)
+                if m:
+                    return set(m.group(1).replace(',', ' ').split()), f
+            return set(), f
+    return None, None
+
+
+def core_packages():
+    try:
+        return set(os.listdir('/usr/ports/core'))
+    except OSError:
+        return set()
+
+
+# ---- commands -----------------------------------------------------------------------------
+
+def cmd_deps(names):
+    s = System()
+    core = core_packages()
+    try:
+        os.makedirs(RDEPS, exist_ok=True)
+    except OSError:
+        pass
+    missing_any = False
+    for name in names:
+        if name not in s.files:
+            print(f'{name}: not installed')
+            continue
+        deps, broken = s.scan(name)
+        print(f'{name}: needs {" ".join(sorted(deps)) or "(nothing beyond itself)"}')
+        try:
+            with open(os.path.join(RDEPS, name), 'w') as f:
+                f.write('\n'.join(sorted(deps)) + '\n')
+        except OSError:
+            pass
+        want, pkgfile = declared(name)
+        if want is not None:
+            missing = sorted(deps - want - core)
+            if missing:
+                missing_any = True
+                print(f'  ! its Pkgfile ({pkgfile}) doesn\'t list: {" ".join(missing)}')
+        for f, sos in broken.items():
+            print(f'  ! {f} can\'t find {", ".join(sos)}')
+    return 2 if missing_any else 0
+
+
+def cmd_check(names):
+    s = System()
+    pool = names or sorted(s.files)
+    broken = {}
+    deps_of = {}
+    for name in pool:
+        deps, b = s.scan(name)
+        deps_of[name] = deps
+        if b:
+            broken[name] = b
+    # rebuild order: a broken package after any broken package it depends on
+    order, seen = [], set()
+
+    def visit(n, stack=()):
+        if n in seen or n in stack:
+            return
+        for d in sorted(deps_of.get(n, ())):
+            if d in broken:
+                visit(d, stack + (n,))
+        seen.add(n)
+        order.append(n)
+    for n in sorted(broken):
+        visit(n)
+    for n in order:
+        print(n)
+    return 1 if order else 0
+
+
+def cmd_explain(names):
+    s = System()
+    for name in names:
+        _deps, broken = s.scan(name)
+        if not broken:
+            print(f'{name}: nothing missing')
+        for f, sos in broken.items():
+            print(f'{name}: {f} can\'t find {", ".join(sos)}')
+    return 0
+
+
+def main(argv):
+    if len(argv) < 1 or argv[0] in ('-h', '--help', 'help'):
+        print(__doc__)
+        return 0
+    cmd, names = argv[0], argv[1:]
+    if cmd == 'deps':
+        return cmd_deps(names) if names else (print('deps: which packages?'), 2)[1]
+    if cmd == 'check':
+        return cmd_check(names)
+    if cmd == 'explain':
+        return cmd_explain(names)
+    print(f'metamelayer-deps: unknown command {cmd!r}', file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

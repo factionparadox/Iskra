@@ -118,11 +118,10 @@ done
 say "Building the rest of Avalon (the long part: Mango, Quickshell, greetd and what they need)"
 prt-get depinst avalon
 
-say "Anything an update left broken"
-broken=" $(revdep 2>/dev/null | tr '\n' ' ') "
-for p in $(closure); do
-	case "$broken" in *" $p "*) say "rebuild: $p"; prt-get update -fr "$p" ;; esac
-done
+say "What Avalon's packages really need, read from their programs"
+# shellcheck disable=SC2046
+python3 "$AVALON/desktop/usr/lib/avalon/metamelayer-deps" deps $(closure) | grep -B1 '!' || echo "    every Pkgfile lists what its programs need"
+metamelayer fix
 
 say "The Intel graphics for Neredy (Mesa's Vulkan driver)"
 if ! ls /usr/share/vulkan/icd.d/intel*.json >/dev/null 2>&1; then
