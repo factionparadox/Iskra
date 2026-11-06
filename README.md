@@ -52,20 +52,21 @@ current firmware, a Gentoo base system with Portage and Neredy's Russian voice, 
 
 ### On the laptop
 
-1. Write the ISO to a USB stick, boot it, log in as root.
-2. Install (offline, from the disc):
+1. Write the ISO to a USB stick (Rufus: DD image mode) and boot it (F12 at the Framework logo).
+2. The installer starts by itself, in large type, as menus like CRUX's own setup. It asks your
+   username, your password and root's, which disk (from a list), and whether to erase it (yes or
+   no). Then it installs from the stick, with no internet and nothing compiled, showing its
+   progress: CRUX's core, Gentoo's kernel and firmware, Gentoo with Portage, Avalon's ports,
+   fstab, you, and GRUB with the Garden's boot screen.
+3. Restart (it offers to), taking the stick out. **The first start builds Avalon on the laptop**:
+   it lists the Wi-Fi networks it can see and asks for the password (or use a cable), then builds
+   Avalon with the build scrolling past, and restarts into the Garden System. If a build fails it
+   offers to try again (carrying on), show the log, or open a shell; `avalon-firstboot` carries
+   on later too. Once Avalon is built, NetworkManager looks after the network (`nmtui`, or
+   Avalon Control), with your Wi-Fi already saved.
 
-       /media/avalon-install YOURNAME
-
-   It asks which disk to use and erases it once you type `yes` (a 1 GB EFI partition, ext4 for
-   the rest; to lay it out yourself, mount it under `/mnt` first, EFI at `/mnt/boot/efi`). It asks
-   for your Wi-Fi (for the first boot), then installs CRUX's core, the Gentoo kernel and firmware,
-   Gentoo with Portage, Avalon's ports, `/etc/fstab`, your user (it asks for your and root's
-   passwords) and GRUB.
-3. `reboot`. **The first boot builds Avalon on the laptop**: it gets online, brings CRUX's ports
-   up to date, installs the disc's packages that are still current and compiles the rest
-   (Mango, Quickshell, greetd, PipeWire...), showing every build, then reboots into the Garden
-   System. If a build fails, log in as root, fix it, and run `avalon-firstboot`: it carries on.
+To lay the disk out yourself, open a shell on the stick (Alt+F2, log in as root), partition and
+mount it under `/mnt` (EFI at `/mnt/boot/efi`), and run `/media/avalon-install`: it uses that.
 
 ### Portage, the escape hatch
 

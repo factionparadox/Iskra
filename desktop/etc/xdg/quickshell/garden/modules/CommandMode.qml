@@ -79,9 +79,9 @@ PanelWindow {
 			if (a[0] === "down") return stay(["brightnessctl", "set", "5%-"])
 			const p = percent(a[0]); if (p < 1) return tell("brightness: 1–100, up or down", true)
 			sh(["brightnessctl", "set", p + "%"]) } },
-		{ name: "wifi", args: "[on, off]", what: "Wi-Fi on or off; on its own, the network settings", run: a => {
+		{ name: "wifi", args: "[on, off]", what: "Wi-Fi on or off; on its own, nmtui", run: a => {
 			if (a[0] === "on" || a[0] === "off") return sh(["nmcli", "radio", "wifi", a[0]])
-			sh(["avalon-control", "network"]) } },
+			sh(["kitty", "--title", "Wi-Fi", "nmtui"]) } },
 		{ name: "bluetooth", args: "[on, off]", what: "Bluetooth on or off; on its own, its settings", run: a => {
 			if (a[0] === "on" || a[0] === "off") return sh(["bluetoothctl", "power", a[0]])
 			sh(["avalon-control", "bluetooth"]) } },

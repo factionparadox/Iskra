@@ -1,49 +1,134 @@
-#!/bin/sh
-# avalon-firstboot: Avalon's first boot. /etc/rc.local runs it while the flag file exists: it
-# gets online (the Wi-Fi the installer was given, or a cable), then builds Avalon on this
-# laptop with avalon-setup, showing every build, and reboots into the Garden System.
-# If something fails it says so and leaves you at a login: fix it and run  avalon-firstboot
+#!/bin/bash
+# avalon-firstboot: Avalon's first start. The installer has tty1 log root in by itself, once, and
+# root's .bash_profile runs this while /var/lib/avalon/firstboot exists. In dialog screens, in
+# large type, it:
+#   1. gets online: a list of the Wi-Fi networks it can see, then the password (or a cable);
+#   2. builds Avalon on this laptop with avalon-setup, the build scrolling past on screen;
+#   3. puts tty1 back to a normal login, and restarts into the Garden System.
+# If the build stops, it says so and offers to try again (carrying on), read the log, or a shell.
+# NetworkManager, built in step 2, takes over the network afterwards (nmtui, or Avalon Control);
+# the Wi-Fi chosen here is saved for it.
 FLAG=/var/lib/avalon/firstboot
 LOG=/var/log/avalon-firstboot.log
+TITLE="Avalon 1 (Iskra) · first start"
+WPA_CONF=/etc/wpa_supplicant-avalon.conf
 [ -f $FLAG ] || exit 0
 USER_NAME=$(cat $FLAG)
+setfont latarcyrheb-sun32 2>/dev/null
 
-say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-online() { ping -c 1 -W 3 crux.nu >/dev/null 2>&1; }
+d() { dialog --backtitle "$TITLE" --colors "$@" 3>&1 1>&2 2>&3; }
+online() { ping -c 1 -W 3 crux.nu >/dev/null 2>&1 || ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; }
+rows() { echo $(( $(tput lines 2>/dev/null || echo 40) - 6 )); }
+cols() { echo $(( $(tput cols 2>/dev/null || echo 120) - 6 )); }
 
-clear 2>/dev/null
-printf '\033[1;36m%s\033[0m\n' "Avalon 1 (Iskra): first boot. Building the Garden System on this laptop."
+# --- 1. online --------------------------------------------------------------------------
 
-if ! online; then
-	say "Getting online"
-	wifi=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1); wifi=${wifi%/wireless}; wifi=${wifi##*/}
-	if [ -n "$wifi" ] && [ -f /etc/wpa_supplicant-avalon.conf ]; then
-		echo "    Wi-Fi on $wifi"
-		ip link set "$wifi" up
-		wpa_supplicant -B -i "$wifi" -c /etc/wpa_supplicant-avalon.conf -P /run/avalon-wpa.pid
-	fi
-	dhcpcd -w -t 60 >/dev/null 2>&1 &
-	i=0; while ! online && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done
-fi
-if ! online; then
-	echo
-	echo "No internet. Log in as root, get online (a cable, or wpa_supplicant + dhcpcd), then run:"
-	echo "    avalon-firstboot"
-	exit 0
-fi
-echo "    online"
+wifi_if() { local w; w=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1); w=${w%/wireless}; echo "${w##*/}"; }
 
-status=/run/avalon-firstboot.status
-( /usr/ports/avalon/avalon-setup "$USER_NAME"; echo $? > $status ) 2>&1 | tee -a $LOG
-if [ "$(cat $status 2>/dev/null)" != 0 ]; then
-	echo
-	echo "The build stopped (the whole log: $LOG). Log in as root, fix it, and run:  avalon-firstboot"
-	echo "It carries on from where it stopped. Portage is there too, if you need it: metamelayer gentoo"
-	exit 0
-fi
+save_for_networkmanager() {   # $1 ssid, $2 password (empty: an open network)
+	local f=/etc/NetworkManager/system-connections/$1.nmconnection
+	mkdir -p /etc/NetworkManager/system-connections
+	( umask 077
+	  printf '[connection]\nid=%s\ntype=wifi\n\n[wifi]\nssid=%s\nmode=infrastructure\n\n' "$1" "$1"
+	  [ -n "$2" ] && printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$2"
+	  printf '[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' ) > "$f"
+}
 
-rm -f $FLAG /etc/wpa_supplicant-avalon.conf
-[ -f /run/avalon-wpa.pid ] && kill "$(cat /run/avalon-wpa.pid)" 2>/dev/null
-say "Avalon is built. Rebooting into the Garden System..."
-sleep 5
+get_online() {
+	online && return 0
+	dhcpcd -w -t 15 >/dev/null 2>&1 &          # a cable, if there is one
+	sleep 4; online && return 0
+	local IF; IF=$(wifi_if)
+	while :; do
+		if [ -z "$IF" ]; then
+			d --title " Online " --yes-label "Look again" --no-label "Shell" --yesno \
+				"\nNo Wi-Fi card was found. Plug in a cable (or a phone, tethering over USB),\nthen choose Look again." 10 70 \
+				|| { clear; echo "Type  avalon-firstboot  when you're online."; exit 0; }
+			dhcpcd -w -t 15 >/dev/null 2>&1; online && return 0; IF=$(wifi_if); continue
+		fi
+		ip link set "$IF" up 2>/dev/null
+		if ! pgrep -x wpa_supplicant >/dev/null; then
+			[ -f $WPA_CONF ] || { umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > $WPA_CONF; }
+			wpa_supplicant -B -i "$IF" -c $WPA_CONF >/dev/null 2>&1
+			sleep 1
+		fi
+		dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nLooking for Wi-Fi networks…" 5 40
+		wpa_cli -i "$IF" scan >/dev/null 2>&1; sleep 5
+		# bssid / frequency / signal / flags / ssid → the strongest of each name, strongest first
+		local menu=()
+		while IFS=$'\t' read -r sig flags ssid; do
+			local pc=$(( (sig + 100) * 2 )); [ $pc -gt 100 ] && pc=100; [ $pc -lt 0 ] && pc=0
+			local lock="open"; [[ $flags == *WPA* || $flags == *RSN* || $flags == *SAE* ]] && lock="password"
+			menu+=("$ssid" "$(printf '%3d%%   %s' $pc "$lock")")
+		done < <(wpa_cli -i "$IF" scan_results 2>/dev/null | tail -n +2 | sort -t$'\t' -k3,3nr |
+			awk -F'\t' '$5 != "" && !seen[$5]++ {print $3 "\t" $4 "\t" $5}' | sort -t$'\t' -k1,1nr)
+		menu+=("↻" "look again" "⌁" "I've plugged in a cable")
+		local ssid
+		ssid=$(d --title " Wi-Fi " --menu "\nAvalon builds itself from the internet. Which network?" \
+			$(( $(rows) < 24 ? $(rows) : 24 )) 70 14 "${menu[@]}") \
+			|| { clear; echo "Type  avalon-firstboot  to carry on."; exit 0; }
+		case $ssid in
+			"↻") continue ;;
+			"⌁") dhcpcd -w -t 15 >/dev/null 2>&1; online && return 0
+			     d --title " Online " --msgbox "\nNo luck over the cable either." 7 40; continue ;;
+		esac
+		local flags psk=
+		flags=$(wpa_cli -i "$IF" scan_results | awk -F'\t' -v s="$ssid" '$5 == s {print $4; exit}')
+		if [[ $flags == *WPA* || $flags == *RSN* || $flags == *SAE* ]]; then
+			psk=$(d --title " $ssid " --insecure --passwordbox "\nThe password for $ssid:" 10 60) || continue
+		fi
+		dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nJoining $ssid…" 5 50
+		local id; id=$(wpa_cli -i "$IF" add_network | tail -1)
+		wpa_cli -i "$IF" set_network "$id" ssid "\"$ssid\"" >/dev/null
+		if [ -n "$psk" ]; then wpa_cli -i "$IF" set_network "$id" psk "\"$psk\"" >/dev/null
+		else wpa_cli -i "$IF" set_network "$id" key_mgmt NONE >/dev/null; fi
+		wpa_cli -i "$IF" select_network "$id" >/dev/null
+		local i=0; while [ $i -lt 20 ] && ! wpa_cli -i "$IF" status | grep -q '^wpa_state=COMPLETED'; do sleep 1; i=$((i + 1)); done
+		dhcpcd -w -t 30 "$IF" >/dev/null 2>&1
+		if online; then
+			wpa_cli -i "$IF" save_config >/dev/null 2>&1
+			save_for_networkmanager "$ssid" "$psk"
+			return 0
+		fi
+		wpa_cli -i "$IF" remove_network "$id" >/dev/null
+		d --title " $ssid " --msgbox "\n\Z1Couldn't get online through $ssid.\Zn\nThe password may be wrong. Try again." 9 60
+	done
+}
+
+# --- 2. build ---------------------------------------------------------------------------
+
+d --title " Hello " --msgbox "\n\Zb\Z6Avalon\Zn is starting for the first time.\n\n\
+First it gets online, then it builds itself on this laptop: Mango, Quickshell, greetd and the\n\
+rest. That takes a while; the build scrolls past so you can watch. When it's done, it restarts\n\
+into the Garden System." 13 76
+
+get_online
+
+while :; do
+	{ /usr/ports/avalon/avalon-setup "$USER_NAME"; echo $? > /run/avalon-firstboot.rc; } 2>&1 | tee -a $LOG |
+		dialog --backtitle "$TITLE" --title " Building Avalon (log: $LOG) " --progressbox "$(rows)" "$(cols)"
+	[ "$(cat /run/avalon-firstboot.rc 2>/dev/null)" = 0 ] && break
+	choice=$(d --title " The build stopped " --no-cancel --menu "\n\Z1Something didn't build.\Zn The last lines:\n\n$(tail -6 $LOG | cut -c1-70)\n" 22 78 5 \
+		again  "Try again (it carries on from where it stopped)" \
+		log    "Read the log" \
+		online "Change the network" \
+		shell  "A shell (exit comes back here); Portage is there too: metamelayer gentoo" \
+		later  "Leave it for now (a normal login; avalon-firstboot carries on later)") || choice=later
+	case $choice in
+		log)    dialog --backtitle "$TITLE" --title " $LOG " --textbox $LOG "$(rows)" "$(cols)" ;;
+		online) pkill -x dhcpcd; get_online ;;
+		shell)  clear; echo "The log is $LOG. Type exit to come back."; bash -l ;;
+		later)  clear; echo "Type  avalon-firstboot  to carry on."; exit 0 ;;
+	esac
+done
+
+# --- 3. done ----------------------------------------------------------------------------
+
+rm -f $FLAG
+[ -f /etc/inittab.avalon ] && mv /etc/inittab.avalon /etc/inittab     # tty1: a normal login again
+sed -i '/avalon-firstboot/d' /root/.bash_profile
+pkill -x wpa_supplicant; pkill -x dhcpcd                               # NetworkManager from now on
+rm -f $WPA_CONF
+d --title " Built " --msgbox "\n\Zb\Z2Avalon is built.\Zn\n\nIt restarts now, into the Garden System. Log in as \Zb$USER_NAME\Zn." 10 64
+clear
 reboot

@@ -399,7 +399,8 @@ def page_network(win):
         panel('Wi-Fi',
               row('Wi-Fi', switch(wifi_on, lambda on: (run('nmcli', 'radio', 'wifi', 'on' if on else 'off'), scan()))),
               sw, password,
-              buttons(button('Join', connect, accent=True), button('Look again', scan)),
+              buttons(button('Join', connect, accent=True), button('Look again', scan),
+                      button('nmtui', lambda: spawn('kitty', '--title', 'Wi-Fi', 'nmtui'))),
               status),
     ]
 

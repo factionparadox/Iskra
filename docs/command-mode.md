@@ -22,7 +22,7 @@ A short start works when only one command fits it: `vol 40` is `volume 40`.
 | `term [COMMAND]` | open kitty, running the command if given |
 | `volume 40` / `up` / `down` / `mute` | sound volume |
 | `brightness 60` / `up` / `down` | screen brightness |
-| `wifi on` / `off`, or `wifi` | Wi-Fi on or off, or the network page of Avalon Control |
+| `wifi on` / `off`, or `wifi` | Wi-Fi on or off, or nmtui |
 | `bluetooth on` / `off`, or `bluetooth` | the same for Bluetooth |
 | `night on` / `off` | warmer colours (wlsunset) |
 | `ask QUESTION` | open Neredy and ask her |
