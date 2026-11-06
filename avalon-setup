@@ -44,6 +44,16 @@ for opt in 'writelog enabled' 'logmode overwrite' 'rmlog_on_success no' 'logfile
 done
 sed -i "s|^#\?[[:space:]]*export MAKEFLAGS=.*|export MAKEFLAGS=\"-j$(nproc)\"|" /etc/pkgmk.conf
 grep -q '^export MAKEFLAGS' /etc/pkgmk.conf || echo "export MAKEFLAGS=\"-j$(nproc)\"" >> /etc/pkgmk.conf
+# the compiler cache: once ccache is installed, every build goes through it, so building something
+# again (a fix after a library update, a release bump) reuses what didn't change
+if ! grep -q 'avalon: ccache' /etc/pkgmk.conf; then
+	cat >> /etc/pkgmk.conf <<'CCACHE'
+# avalon: ccache (metamelayer cache shows what it has saved)
+if [ -d /usr/lib/ccache ]; then
+	export PATH="/usr/lib/ccache:$PATH" CCACHE_DIR=/var/cache/ccache
+fi
+CCACHE
+fi
 
 say "Metamelayer, and your own key for Avalon's ports"
 install -m 755 "$AVALON/desktop/usr/bin/metamelayer" /usr/bin/metamelayer

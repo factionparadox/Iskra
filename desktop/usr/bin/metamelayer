@@ -10,6 +10,9 @@
 #   metamelayer info NAME          what a port is and what it needs
 #   metamelayer list               what's installed
 #   metamelayer diff               installed packages with newer ports
+#   metamelayer hold NAME...       keep these at the version they are: upgrade leaves them alone
+#   metamelayer unhold NAME...     let upgrade update them again
+#   metamelayer held               what's held
 #   metamelayer deps NAME...       what a package really needs, read from its programs, and what
 #                                  its Pkgfile's "Depends on" line misses
 #   metamelayer check [NAME...]    packages with a library missing (broken by an update)
@@ -18,6 +21,12 @@
 #                                  name, the most recent build's
 #   metamelayer arch NAME...       before building: what Arch Linux (or the AUR) says NAME needs to
 #                                  run and to build, matched to CRUX's ports, and what's missing
+#   metamelayer new NAME           start a port for something CRUX doesn't have: a Pkgfile in
+#                                  Avalon's ports, filled in from Arch's package (description,
+#                                  URL, version, dependencies as CRUX ports, a build() for its
+#                                  build system); you add the source address
+#   metamelayer cache              what the compiler cache (ccache) has saved: a rebuild of
+#                                  something already built once mostly comes from it
 #   metamelayer key                make your own signing key for Avalon's ports (once)
 #   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
 #   metamelayer flatpak install|remove|update|list|search [APP]
@@ -133,7 +142,7 @@ with_check() {   # run a prt-get command, then check what it changed and fix wha
 	return $status
 }
 
-[ $# -ge 1 ] || { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd=$1; shift
 case $cmd in
 	sync)            root sync; sync_ports ;;
@@ -144,6 +153,17 @@ case $cmd in
 	info)            exec prt-get info "$@" ;;
 	list|ls)         exec prt-get listinst ;;
 	diff)            exec prt-get diff ;;
+	hold)            root hold; [ $# -gt 0 ] || die "hold what?"
+	                 for p in "$@"; do prt-get lock "$p" && echo "    $p held"; done ;;
+	unhold)          root unhold; [ $# -gt 0 ] || die "unhold what?"
+	                 for p in "$@"; do prt-get unlock "$p" && echo "    $p will update again"; done ;;
+	held)            exec prt-get listlocked ;;
+	new)             root new; [ $# -eq 1 ] || die "new: one name (metamelayer new NAME)"
+	                 python3 "$DEPS" new "$1" "$PORTS" || exit $?
+	                 echo "Next: put the source address in $PORTS/$1/Pkgfile, then"
+	                 echo "      sudo metamelayer sign $1 && sudo metamelayer install $1" ;;
+	cache)           command -v ccache >/dev/null || die "ccache isn't installed (sudo metamelayer install ccache)"
+	                 CCACHE_DIR=${CCACHE_DIR:-/var/cache/ccache} exec ccache -s ;;
 	deps)            [ $# -gt 0 ] || die "deps of what?"; exec python3 "$DEPS" deps "$@" ;;
 	check)           broken=$(python3 "$DEPS" check "$@" || true)
 	                 [ -n "$broken" ] || { say "Nothing is broken"; exit 0; }

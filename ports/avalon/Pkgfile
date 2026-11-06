@@ -1,7 +1,7 @@
 # Description: Avalon: everything for the Garden System desktop on the Framework Laptop 13 Pro
 # URL: https://github.com/factionparadox/Iskra
 # Maintainer: Avalon
-# Depends on: gentoo-kernel-bin linux-firmware grub2-efi wpa_supplicant prt-utils avalon-desktop llama-cpp-bin piper-bin vulkan-loader python3 python3-gobject gtk4 mango quickshell kitty greetd cage seatd dbus networkmanager bluez upower pipewire wireplumber brightnessctl grim slurp swappy wl-clipboard mpv fastfetch firefox-bin wlsunset flatpak xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk sudo git
+# Depends on: ccache gentoo-kernel-bin linux-firmware grub2-efi wpa_supplicant prt-utils avalon-desktop llama-cpp-bin piper-bin vulkan-loader python3 python3-gobject gtk4 mango quickshell kitty greetd cage seatd dbus networkmanager bluez upower pipewire wireplumber brightnessctl grim slurp swappy wl-clipboard mpv fastfetch firefox-bin wlsunset flatpak xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk sudo git
 
 name=avalon
 version=1

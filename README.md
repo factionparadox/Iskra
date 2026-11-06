@@ -70,8 +70,14 @@ mount it under `/mnt` (EFI at `/mnt/boot/efi`), and run `/media/avalon-install`:
 
 ### Something CRUX doesn't have
 
-Write a Pkgfile for it in Avalon's ports (`/usr/ports/avalon/ports/NAME/Pkgfile`), the same way
-as the ones already there, then `sudo metamelayer sign NAME && sudo metamelayer install NAME`.
+`sudo metamelayer new NAME` starts a port for it in Avalon's ports
+(`/usr/ports/avalon/ports/NAME/Pkgfile`), filled in from Arch's package where there is one: the
+description, homepage, version, dependencies as CRUX ports, and a `build()` for its build system.
+Add the source address, then `sudo metamelayer sign NAME && sudo metamelayer install NAME`.
+
+To keep a package where it is through upgrades: `sudo metamelayer hold NAME` (`unhold` lets it
+go). Builds go through ccache, so rebuilding something already built once is mostly cached
+(`metamelayer cache` shows how much). Every build keeps its log: `metamelayer log NAME`.
 For apps only published as Flatpaks (Sober, for one): `metamelayer flatpak install APP`.
 
 ### On an existing CRUX install instead

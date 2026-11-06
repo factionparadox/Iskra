@@ -17,9 +17,12 @@ package that owns that file (from pkgutils' database).
     metamelayer-deps arch NAME...    before building: what Arch Linux's package (or the AUR's) says
                                      NAME needs to run and to build, matched to CRUX's ports: which
                                      are there, which have no port yet, and what the Pkgfile misses
+    metamelayer-deps new NAME DIR    a first Pkgfile for a new port in DIR/NAME, filled in from
+                                     Arch's package (description, URL, version, dependencies
+                                     matched to CRUX's ports, and a build() for its build system)
 
 Runtime dependencies found by `deps` are kept in /var/lib/avalon/rdeps/NAME.
-Only reads: it never changes the system (metamelayer does the rebuilding).
+Only reads (apart from `new`, which writes one new Pkgfile): it never changes the system (metamelayer does the rebuilding).
 """
 import os
 import re
@@ -308,7 +311,7 @@ AUR = 'https://aur.archlinux.org/rpc/v5/info?arg[]='
 RENAMES = {'python': 'python3', 'freetype2': 'freetype', 'libgl': 'libglvnd', 'sh': 'bash',
            'python-gobject': 'python3-gobject', 'wlroots0.20': 'wlroots', 'wlroots0.19': 'wlroots',
            'gcc-libs': 'gcc', 'glib2': 'glib', 'pcre2': 'libpcre2', 'pcre': 'libpcre', 'libgcc': 'gcc', 'libstdc++': 'gcc', 'pam': 'linux-pam',
-           'libxkbcommon-x11': 'libxkbcommon', 'libpipewire': 'pipewire', 'xorg-server-xwayland': 'xorg-xwayland',
+           'libxkbcommon-x11': 'libxkbcommon', 'libpipewire': 'pipewire', 'libpulse': 'pulseaudio', 'xorg-server-xwayland': 'xorg-xwayland',
            'systemd-libs': None, 'systemd': None}
 
 
@@ -491,6 +494,96 @@ def cmd_arch(names):
     return worst
 
 
+BUILD_TOOLS = {'meson', 'ninja', 'cmake', 'make', 'pkgconf', 'pkg-config', 'gcc', 'git', 'autoconf',
+               'automake', 'libtool', 'python-build', 'python-installer', 'python-wheel',
+               'python-setuptools', 'rust', 'cargo', 'go'}
+
+BUILDS = {
+    'meson': '''  meson setup $name-$version build \\
+    --prefix=/usr \\
+    --buildtype=plain \\
+    --wrap-mode nodownload
+  meson compile -C build
+  DESTDIR=$PKG meson install -C build''',
+    'cmake': '''  cmake -S $name-$version -B build -G Ninja \\
+    -D CMAKE_INSTALL_PREFIX=/usr \\
+    -D CMAKE_INSTALL_LIBDIR=lib \\
+    -D CMAKE_BUILD_TYPE=Release
+  cmake --build build
+  DESTDIR=$PKG cmake --install build''',
+    'python': '''  cd $name-$version
+  /usr/bin/python3 -m build --wheel --no-isolation
+  /usr/bin/python3 -m installer --destdir=$PKG dist/*.whl''',
+    'cargo': '''  cd $name-$version
+  cargo build --release --locked
+  install -Dm755 target/release/$name $PKG/usr/bin/$name''',
+    'configure': '''  cd $name-$version
+  ./configure --prefix=/usr
+  make
+  make DESTDIR=$PKG install''',
+}
+
+
+def cmd_new(name, dest):
+    """a first Pkgfile for a new port, filled in from Arch's package where there is one"""
+    target = os.path.join(dest, name)
+    if os.path.exists(os.path.join(target, 'Pkgfile')):
+        print(f'new: {target}/Pkgfile already exists')
+        return 2
+    a = arch_lookup(name)
+    if a is not None and 'error' in a:
+        print(f'new: couldn\'t reach Arch ({a["error"]}); writing a blank Pkgfile')
+        a = None
+    ports, core, s = all_ports(), core_packages(), System()
+
+    def provider_of_lib(soname):
+        p = s.find(soname, [], 2)
+        return s.owner_of(p) if p else None
+
+    deps, lacking = [], []
+    mk = set(a['makedepends']) if a else set()
+    for d in (a['depends'] + a['makedepends']) if a else []:
+        bare = re.split(r'[<>=]', d, maxsplit=1)[0]
+        if bare in BUILD_TOOLS and bare not in a['depends']:
+            continue
+        port, note = crux_name(d, ports, s, provider_of_lib)
+        if port is None and '.so' in d:              # libfoo.so with nothing installed: a port named foo?
+            base = d.split('.so')[0]
+            port = next((c for c in (base, base[3:]) if c in ports), None)
+        if port is None:
+            if not d.startswith(a['name'] + '-') and 'systemd' not in note:
+                lacking.append(note)
+        elif port not in core and port != name and port not in deps:
+            deps.append(port)
+    kind = ('meson' if 'meson' in mk else 'cmake' if 'cmake' in mk else
+            'python' if 'python-build' in mk else 'cargo' if {'rust', 'cargo'} & mk else 'configure')
+    version = re.sub(r'^\d+:', '', a['version']).rsplit('-', 1)[0] if a else '0'
+    lines = [f'# Description: {a["desc"] if a else "TODO: what it is, in a line"}',
+             f'# URL: {a["url"] if a else "TODO"}',
+             '# Maintainer: Avalon',
+             f'# Depends on: {" ".join(deps)}']
+    if a and a['name'] != name:
+        lines.append(f'# Arch: {a["name"]}')
+    lines += ['']
+    if a:
+        where = ('https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=' if a['from'] == 'the AUR'
+                 else 'https://gitlab.archlinux.org/archlinux/packaging/packages/') + a['name']
+        lines += [f'# Filled in from {a["from"]} ({a["name"]} {a["version"]}). Its PKGBUILD, for the',
+                  f'# source address and any patches: {where}']
+    if lacking:
+        lines.append(f'# No CRUX port yet (each needs one first): {" ".join(lacking)}')
+    lines += ['', f'name={name}', f'version={version}', 'release=1',
+              'source=(TODO: the release tarball, e.g. https://…/$name-$version.tar.gz)', '',
+              'build() {', BUILDS[kind], '}', '']
+    os.makedirs(target, exist_ok=True)
+    with open(os.path.join(target, 'Pkgfile'), 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+    print(f'{target}/Pkgfile written ({kind} build{", from " + a["from"] if a else ""})')
+    if lacking:
+        print(f'  no CRUX port yet: {" ".join(lacking)}')
+    return 0
+
+
 def main(argv):
     if len(argv) < 1 or argv[0] in ('-h', '--help', 'help'):
         print(__doc__)
@@ -502,6 +595,8 @@ def main(argv):
         return cmd_check(names)
     if cmd == 'explain':
         return cmd_explain(names)
+    if cmd == 'new':
+        return cmd_new(names[0], names[1]) if len(names) == 2 else (print('new: NAME PORTSDIR'), 2)[1]
     if cmd == 'arch':
         return cmd_arch(names) if names else (print('arch: which packages?'), 2)[1]
     print(f'metamelayer-deps: unknown command {cmd!r}', file=sys.stderr)
