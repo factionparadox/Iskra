@@ -130,13 +130,20 @@ cp "${s3##*/}" gentoo-latest.tar.xz "$OV/avalon/gentoo/"
 rm -f grub.cfg
 xorriso -osirrox on -indev crux-3.8.iso -extract /boot/grub/grub.cfg grub.cfg 2>/dev/null
 chmod u+w grub.cfg
-sed -i 's|Install/Upgrade CRUX 3.8|Install Avalon 1 (Iskra)|g' grub.cfg
+sed -i 's|Install/Upgrade CRUX 3.8 (UEFI mode)|Install Avalon 1 (Iskra)|g; s|^set timeout=99|set timeout=15|' grub.cfg
+# and it looks like the Garden System: the theme goes in once the graphical terminal is on
+awk '{print} /^    terminal_output gfxterm$/ {
+	t = "$prefix/themes/avalon"
+	print "    insmod png"; print "    loadfont " t "/menu.pf2"; print "    loadfont " t "/hint.pf2"
+	print "    set theme=" t "/theme.txt"
+}' grub.cfg > grub.cfg.new && mv grub.cfg.new grub.cfg
+grep -n 'theme\|loadfont\|timeout\|menuentry' grub.cfg
 
 say "Writing $OUT"
 rm -f "$OUT"
 xorriso -indev crux-3.8.iso -outdev "$OUT" -compliance iso_9660_level=3 \
 	-map "$OV/avalon" /avalon -map "$OV/avalon-install" /avalon-install \
-	-map grub.cfg /boot/grub/grub.cfg -map "$REPO/README.md" /AVALON-README.txt -map "$REPO/docs" /avalon-docs \
+	-map grub.cfg /boot/grub/grub.cfg -map "$REPO/desktop/usr/share/avalon/grub-theme" /boot/grub/themes/avalon -map "$REPO/README.md" /AVALON-README.txt -map "$REPO/docs" /avalon-docs \
 	-boot_image any replay
 [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:" "$OUT"
 (cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")

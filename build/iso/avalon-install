@@ -176,7 +176,14 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet"
 GRUB_DISABLE_LINUX_UUID=true
 GRUB_DISABLE_LINUX_PARTUUID=false
 GRUB_DISABLE_RECOVERY=true
+# the Garden System's boot screen
+GRUB_THEME=/boot/grub/themes/avalon/theme.txt
+GRUB_GFXMODE=auto
+GRUB_TERMINAL_OUTPUT=gfxterm
 EOF
+mkdir -p $ROOT/boot/grub/themes
+rm -rf $ROOT/boot/grub/themes/avalon
+cp -r "$MEDIA/avalon/repo/desktop/usr/share/avalon/grub-theme" $ROOT/boot/grub/themes/avalon
 inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --bootloader-id=Avalon
 inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --removable
 inroot grub-mkconfig -o /boot/grub/grub.cfg

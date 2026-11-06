@@ -1,0 +1,36 @@
+# Avalon's GRUB theme (made by build/make-grub-theme.py)
+title-text: ""
+desktop-image: "background.png"
+desktop-image-scale-method: "crop"
+desktop-color: "#070b16"
+terminal-font: "DejaVu Sans Regular 32"
+
++ boot_menu {
+	left = 46%
+	top = 70%
+	width = 46%
+	height = 25%
+	item_font = "DejaVu Sans Bold 46"
+	selected_item_font = "DejaVu Sans Bold 46"
+	item_color = "#c8cce0"
+	selected_item_color = "#ffffff"
+	item_height = 74
+	item_padding = 26
+	item_spacing = 12
+	icon_width = 0
+	icon_height = 0
+	item_pixmap_style = "item_*.png"
+	selected_item_pixmap_style = "select_*.png"
+	scrollbar = false
+}
+
++ label {
+	left = 10.5%
+	top = 93%
+	width = 32%
+	align = "left"
+	id = "__timeout__"
+	text = "Starting in %d s  ·  ↑ ↓  ·  Enter  ·  e edits"
+	color = "#bfe3d6"
+	font = "DejaVu Sans Regular 32"
+}
