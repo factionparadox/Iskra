@@ -33,35 +33,59 @@ cols() { echo $(( $(tput cols 2>/dev/null || echo 120) - 6 )); }
 
 wifi_if() { local w; w=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1); w=${w%/wireless}; echo "${w##*/}"; }
 
-save_for_networkmanager() {   # $1 ssid, $2 password (empty: an open network)
+save_for_networkmanager() {   # $1 ssid, $2 password (empty: an open network), $3 sae for WPA3
 	local f=/etc/NetworkManager/system-connections/$1.nmconnection
 	mkdir -p /etc/NetworkManager/system-connections
 	( umask 077
 	  printf '[connection]\nid=%s\ntype=wifi\n\n[wifi]\nssid=%s\nmode=infrastructure\n\n' "$1" "$1"
-	  [ -n "$2" ] && printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$2"
+	  [ -n "$2" ] && printf '[wifi-security]\nkey-mgmt=%s\npsk=%s\n\n' "${3:-wpa-psk}" "$2"
 	  printf '[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' ) > "$f"
+	# root's alone: NetworkManager ignores a connection file anyone else can read (and it holds the password)
+	chown root:root "$f"; chmod 600 "$f"
+}
+
+address() {   # address IF|"" SECONDS: get an address from DHCP, then wait to be online
+	if [ -n "$1" ]; then dhcpcd -n "$1" >/dev/null 2>&1 || dhcpcd -b "$1" >/dev/null 2>&1
+	else pgrep -x dhcpcd >/dev/null || dhcpcd -b >/dev/null 2>&1; fi
+	local i=0
+	while [ $i -lt "$2" ]; do online && return 0; sleep 2; i=$((i + 2)); done
+	return 1
 }
 
 get_online() {
 	online && return 0
-	dhcpcd -w -t 15 >/dev/null 2>&1 &          # a cable, if there is one
-	sleep 4; online && return 0
+	dialog --backtitle "$TITLE" --title " Online " --infobox "\nLooking for a connection..." 5 40
+	address "" 10 && return 0                  # a cable, if there is one
 	local IF; IF=$(wifi_if)
 	while :; do
 		if [ -z "$IF" ]; then
 			d --title " Online " --yes-label "Look again" --no-label "Shell" --yesno \
 				"\nNo Wi-Fi card was found. Plug in a cable (or a phone, tethering over USB), then choose Look again." 10 70 \
 				|| { clear; echo "Type  avalon-firstboot  when you're online."; exit 0; }
-			dhcpcd -w -t 15 >/dev/null 2>&1; online && return 0; IF=$(wifi_if); continue
+			address "" 20 && return 0; IF=$(wifi_if); continue
 		fi
 		ip link set "$IF" up 2>/dev/null
-		if ! pgrep -x wpa_supplicant >/dev/null; then
-			[ -f $WPA_CONF ] || { umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > $WPA_CONF; }
-			wpa_supplicant -B -i "$IF" -c $WPA_CONF >/dev/null 2>&1
-			sleep 1
+		# our own wpa_supplicant for this card, unless one is already answering for it (any other
+		# copy running elsewhere doesn't count); what it says goes in the log, not into thin air
+		if ! wpa_cli -i "$IF" ping 2>/dev/null | grep -q PONG; then
+			[ -f $WPA_CONF ] || { printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > $WPA_CONF; chmod 600 $WPA_CONF; }
+			wpa_supplicant -B -i "$IF" -c $WPA_CONF -P /run/wpa_supplicant-avalon.pid >> $LOG 2>&1
+			local s=0
+			until wpa_cli -i "$IF" ping 2>/dev/null | grep -q PONG || [ $s -ge 10 ]; do sleep 1; s=$((s + 1)); done
+			if [ $s -ge 10 ]; then
+				d --title " Wi-Fi " --yes-label "Try again" --no-label "Shell" --yesno \
+					"\n\Z1Wi-Fi ($IF) wouldn't start.\Zn What it said:\n\n$(tail -4 $LOG)" 16 76 \
+					|| { clear; echo "Type  avalon-firstboot  to carry on."; exit 0; }
+				continue
+			fi
 		fi
-		dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nLooking for Wi-Fi networks…" 5 40
-		wpa_cli -i "$IF" scan >/dev/null 2>&1; sleep 5
+		dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nLooking for Wi-Fi networks..." 5 40
+		wpa_cli -i "$IF" scan >/dev/null 2>&1
+		local w=0
+		while [ $w -lt 15 ]; do
+			sleep 1; w=$((w + 1))
+			[ $w -ge 4 ] && [ "$(wpa_cli -i "$IF" scan_results 2>/dev/null | wc -l)" -gt 1 ] && break
+		done
 		# bssid / frequency / signal / flags / ssid → the strongest of each name, strongest first
 		local menu=()
 		while IFS=$'\t' read -r sig flags ssid; do
@@ -70,14 +94,14 @@ get_online() {
 			menu+=("$ssid" "$(printf '%3d%%   %s' $pc "$lock")")
 		done < <(wpa_cli -i "$IF" scan_results 2>/dev/null | tail -n +2 | sort -t$'\t' -k3,3nr |
 			awk -F'\t' '$5 != "" && !seen[$5]++ {print $3 "\t" $4 "\t" $5}' | sort -t$'\t' -k1,1nr)
-		menu+=("↻" "look again" "⌁" "I've plugged in a cable")
+		menu+=("again" "look again" "cable" "I've plugged in a cable")
 		local ssid
 		ssid=$(d --title " Wi-Fi " --menu "\nAvalon builds itself from the internet. Which network?" \
 			$(( $(rows) < 24 ? $(rows) : 24 )) 70 14 "${menu[@]}") \
 			|| { clear; echo "Type  avalon-firstboot  to carry on."; exit 0; }
 		case $ssid in
-			"↻") continue ;;
-			"⌁") dhcpcd -w -t 15 >/dev/null 2>&1; online && return 0
+			again) continue ;;
+			cable) address "" 20 && return 0
 			     d --title " Online " --msgbox "\nNo luck over the cable either." 7 40; continue ;;
 		esac
 		local flags psk=
@@ -85,21 +109,37 @@ get_online() {
 		if [[ $flags == *WPA* || $flags == *RSN* || $flags == *SAE* ]]; then
 			psk=$(d --title " $ssid " --insecure --passwordbox "\nThe password for $ssid:" 10 60) || continue
 		fi
-		dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nJoining $ssid…" 5 50
+		dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nJoining $ssid..." 5 50
 		local id; id=$(wpa_cli -i "$IF" add_network | tail -1)
 		wpa_cli -i "$IF" set_network "$id" ssid "\"$ssid\"" >/dev/null
-		if [ -n "$psk" ]; then wpa_cli -i "$IF" set_network "$id" psk "\"$psk\"" >/dev/null
-		else wpa_cli -i "$IF" set_network "$id" key_mgmt NONE >/dev/null; fi
-		wpa_cli -i "$IF" select_network "$id" >/dev/null
-		local i=0; while [ $i -lt 20 ] && ! wpa_cli -i "$IF" status | grep -q '^wpa_state=COMPLETED'; do sleep 1; i=$((i + 1)); done
-		dhcpcd -w -t 30 "$IF" >/dev/null 2>&1
-		if online; then
-			wpa_cli -i "$IF" save_config >/dev/null 2>&1
-			save_for_networkmanager "$ssid" "$psk"
-			return 0
+		if [ -n "$psk" ]; then
+			wpa_cli -i "$IF" set_network "$id" psk "\"$psk\"" >/dev/null
+			wpa_cli -i "$IF" set_network "$id" key_mgmt "WPA-PSK WPA-PSK-SHA256 SAE" 2>/dev/null | grep -q OK ||
+				wpa_cli -i "$IF" set_network "$id" key_mgmt WPA-PSK >/dev/null
+			wpa_cli -i "$IF" set_network "$id" ieee80211w 1 >/dev/null
+		else
+			wpa_cli -i "$IF" set_network "$id" key_mgmt NONE >/dev/null
 		fi
-		wpa_cli -i "$IF" remove_network "$id" >/dev/null
-		d --title " $ssid " --msgbox "\n\Z1Couldn't get online through $ssid.\Zn\nThe password may be wrong. Try again." 9 60
+		wpa_cli -i "$IF" select_network "$id" >/dev/null
+		local i=0 joined=
+		while [ $i -lt 30 ]; do
+			wpa_cli -i "$IF" status 2>/dev/null | grep -q '^wpa_state=COMPLETED' && { joined=1; break; }
+			sleep 1; i=$((i + 1))
+		done
+		if [ -n "$joined" ]; then
+			dialog --backtitle "$TITLE" --title " Wi-Fi " --infobox "\nJoined $ssid. Getting an address..." 5 50
+			if address "$IF" 40; then
+				wpa_cli -i "$IF" save_config >/dev/null 2>&1; chmod 600 $WPA_CONF
+				km=; wpa_cli -i "$IF" status 2>/dev/null | grep -q '^key_mgmt=SAE' && km=sae
+				save_for_networkmanager "$ssid" "$psk" $km
+				return 0
+			fi
+			wpa_cli -i "$IF" remove_network "$id" >/dev/null
+			d --title " $ssid " --msgbox "\n\Z1Joined $ssid, but couldn't reach the internet through it.\Zn\n\nIf it has a sign-in page (a hotel, a café), it can't be used from here: try another network or a phone's hotspot." 12 64
+		else
+			wpa_cli -i "$IF" remove_network "$id" >/dev/null
+			d --title " $ssid " --msgbox "\n\Z1Couldn't join $ssid.\Zn\n\nThe password may be wrong: try again." 10 60
+		fi
 	done
 }
 
@@ -144,7 +184,8 @@ done
 rm -f $FLAG
 [ -f /etc/inittab.avalon ] && mv /etc/inittab.avalon /etc/inittab     # tty1: a normal login again
 sed -i '/avalon-firstboot/d' /root/.bash_profile
-pkill -x wpa_supplicant; pkill -x dhcpcd                               # NetworkManager from now on
+[ -f /run/wpa_supplicant-avalon.pid ] && kill "$(cat /run/wpa_supplicant-avalon.pid)" 2>/dev/null   # NetworkManager
+pkill -x dhcpcd                                                        # from now on
 rm -f $WPA_CONF
 # and one of Avalon as built, which also puts the snapshot entries in the boot menu
 [ -x /usr/sbin/avalon-snapshot ] && /usr/sbin/avalon-snapshot take "avalon built" >> $LOG 2>&1

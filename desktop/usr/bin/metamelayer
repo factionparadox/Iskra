@@ -54,8 +54,9 @@ AVALON=${AVALON_SRC:-/usr/ports/avalon}
 PORTS=$AVALON/ports
 KEY=/etc/ports/avalon
 
-say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
-die() { printf '\033[1;35mmetamelayer:\033[0m %s\n' "$*" >&2; exit 1; }
+if [ -t 1 ]; then C=$(printf '\033['); else C=; fi   # colour on a terminal only (not in logs or dialog)
+say() { printf '%s==>%s %s\n' "${C:+${C}1;36m}" "${C:+${C}0m}" "$*"; }
+die() { printf '%smetamelayer:%s %s\n' "${C:+${C}1;35m}" "${C:+${C}0m}" "$*" >&2; exit 1; }
 root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo metamelayer $*"; }
 
 sync_ports() {

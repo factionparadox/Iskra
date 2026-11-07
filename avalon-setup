@@ -18,8 +18,9 @@ USER_NAME=${1:-}
 AVALON=/usr/ports/avalon
 DISC=/var/cache/avalon/disc
 
-say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-die()  { printf '\n\033[1;35mavalon-setup: %s\033[0m\n' "$*" >&2; exit 1; }
+if [ -t 1 ]; then C=$(printf '\033['); else C=; fi   # colour on a terminal only (not in logs or dialog)
+say()  { printf '\n%s==> %s%s\n' "${C:+${C}1;36m}" "$*" "${C:+${C}0m}"; }
+die()  { printf '\n%savalon-setup: %s%s\n' "${C:+${C}1;35m}" "$*" "${C:+${C}0m}" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run it as root"
 [ -f /etc/pkgadd.conf ] && command -v pkgadd >/dev/null || die "this isn't CRUX (no pkgutils)"

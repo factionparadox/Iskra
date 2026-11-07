@@ -22,8 +22,9 @@ KEEP=${AVALON_SNAPSHOTS_KEEP:-10}
 CFG=/boot/grub/grub.cfg
 MARK=/etc/grub.d/41_avalon-snapshots
 
-say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
-die() { printf '\033[1;35mavalon-snapshot:\033[0m %s\n' "$*" >&2; exit 1; }
+if [ -t 1 ]; then C=$(printf '\033['); else C=; fi   # colour on a terminal only (not in logs or dialog)
+say() { printf '%s==>%s %s\n' "${C:+${C}1;36m}" "${C:+${C}0m}" "$*"; }
+die() { printf '%savalon-snapshot:%s %s\n' "${C:+${C}1;35m}" "${C:+${C}0m}" "$*" >&2; exit 1; }
 
 usable()  { [ "$(findmnt -no FSTYPE /)" = btrfs ] && mountpoint -q $SNAP; }
 running() { findmnt -no FSROOT / | sed 's|^/||'; }          # @, or @snapshots/NAME when started from one
