@@ -141,6 +141,7 @@ steps() {
 		echo "tmpfs   /dev/shm  tmpfs   nosuid,nodev    0 0"
 	} > "$T/etc/fstab"
 	cat "$T/etc/fstab"
+	cp "$T/usr/share/avalon/os-release" "$T/etc/os-release"   # Avalon (ID_LIKE=slackware); /etc/slackware-version stays
 	echo "avalon.localdomain" > "$T/etc/HOSTNAME"
 	printf '127.0.0.1 localhost\n127.0.1.1 avalon.localdomain avalon\n::1 localhost\n' > "$T/etc/hosts"
 	ln -sf /usr/share/zoneinfo/Europe/London "$T/etc/localtime"

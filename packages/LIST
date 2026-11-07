@@ -10,6 +10,7 @@
 
 # the Garden System's compositor and shell
 scenefx                 avalon:scenefx          # Mango's blur, shadows and rounded corners
+cJSON                   ponce:development/cJSON # Mango reads its IPC messages with it
 mango                   avalon:mango            # the compositor: tags and a Niri-style scroller
 CLI11                   ponce:libraries/CLI11   # Quickshell builds with it (headers only)
 quickshell              avalon:quickshell       # the Garden System itself runs in it
@@ -29,8 +30,8 @@ brightnessctl           ponce:system/brightnessctl
 xdg-desktop-portal-wlr  ponce:system/xdg-desktop-portal-wlr
 fastfetch               ponce:system/fastfetch
 
-# Flatpak, for what's only published there (Sober)
-flatpak                 ponce:desktop/flatpak
+# Metamelayer's engine: slpkg resolves dependencies and builds SlackBuilds from source
+slpkg                   ponce:system/slpkg
 
 # Neredy: the local model runtime and voice (upstream's own ready-made builds)
 llama.cpp               avalon:llama.cpp

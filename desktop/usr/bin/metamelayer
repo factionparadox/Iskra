@@ -1,246 +1,68 @@
 #!/bin/sh
-# metamelayer: Avalon's package manager, over CRUX's own tools (prt-get, pkgmk, pkgutils).
+# metamelayer: Avalon's package manager, on Slackware -current. It speaks plain English over slpkg,
+# which finds a ready-made package where one exists (Slackware's own, then AlienBOB's and
+# conraid's) and otherwise builds one from Ponce's SlackBuilds, dependencies and all. Before
+# anything changes, it takes a Btrfs snapshot, so any change can be undone from the boot menu.
 #
-#   metamelayer sync               update the ports: CRUX's collections and Avalon's
-#   metamelayer install NAME...    build and install, with what they depend on; then check them
+#   metamelayer sync               fetch the repositories' latest package lists
+#   metamelayer install NAME...    install, with what it needs (ready-made, or built from source)
 #   metamelayer remove NAME...     remove
-#   metamelayer upgrade            sync, rebuild whatever is out of date, then check everything
-#                                  and rebuild what the update broke
-#   metamelayer search WORD        find ports by name
-#   metamelayer info NAME          what a port is and what it needs
+#   metamelayer upgrade            bring everything up to date (Slackware's and the others')
+#   metamelayer search WORDS       look for a package, in every repository
+#   metamelayer info NAME          what a package is, where it comes from, what it needs
 #   metamelayer list               what's installed
-#   metamelayer diff               installed packages with newer ports
-#   metamelayer hold NAME...       keep these at the version they are: upgrade leaves them alone
-#   metamelayer unhold NAME...     let upgrade update them again
+#   metamelayer needs NAME         what a package depends on;  metamelayer used-by NAME: the reverse
+#   metamelayer check              anything whose libraries have gone missing (and what to rebuild)
+#   metamelayer hold NAME...       keep these as they are through upgrades;  unhold NAME...: let go
 #   metamelayer held               what's held
-#   metamelayer update NAME...     update these, one at a time; if an update takes a library away,
-#                                  what used it is rebuilt at once (upgrade does the same)
-#   metamelayer deps NAME...       what a package really needs, read from its programs, and what
-#                                  its Pkgfile's "Depends on" line misses
-#   metamelayer check [NAME...]    packages with a library missing (broken by an update)
-#   metamelayer fix                rebuild the broken ones (once each), then check again
-#   metamelayer log [NAME]         a package's build log (/var/log/pkgbuild/NAME.log); without a
-#                                  name, the most recent build's
-#   metamelayer arch NAME...       before building: what Arch Linux (or the AUR) says NAME needs to
-#                                  run and to build, matched to CRUX's ports, and what's missing
-#   metamelayer new NAME           start a port for something CRUX doesn't have: a Pkgfile in
-#                                  Avalon's ports, filled in from Arch's package (description,
-#                                  URL, version, dependencies as CRUX ports, a build() for its
-#                                  build system); you add the source address
-#   metamelayer snapshot [WHY]     a snapshot of the system now (Btrfs: quick, and small until
-#                                  things change). One is taken by itself before every install,
-#                                  upgrade and removal; the newest 10 of those are kept
+#   metamelayer history            what was installed, upgraded and removed, and when
+#   metamelayer snapshot [WHY]     a snapshot of the system now (one is taken before every change)
 #   metamelayer snapshots          the snapshots, newest first
-#   metamelayer rollback NAME      from the next start, the system is as it was in snapshot NAME
-#                                  (your files and logs stay as they are; what you have now is
-#                                  kept as a snapshot, so a rollback can be undone). The boot menu's
-#                                  "Avalon as it was" starts a snapshot to try it, without keeping it
+#   metamelayer rollback NAME      the system as it was in snapshot NAME, from the next start (your
+#                                  files and logs stay as they are; it can be undone the same way)
 #   metamelayer forget NAME...     delete snapshots
-#   metamelayer cache              what the compiler cache (ccache) has saved: a rebuild of
-#                                  something already built once mostly comes from it
-#   metamelayer key                make your own signing key for Avalon's ports (once)
-#   metamelayer sign [NAME...]     sign Avalon's ports with your key (all, or the ones named)
-#   metamelayer flatpak install|remove|update|list|search [APP]
-#                                  Flathub, for apps only published there (e.g. org.vinegarhq.Sober)
-#
-# Like NuTyX's CARDS, Metamelayer reads the libraries each program loads (its ELF dynamic
-# section) instead of trusting "Depends on" lines alone: after every build it says when a Pkgfile
-# missed a dependency, and after every upgrade it rebuilds whatever an updated library broke.
-# Before building one of Avalon's own ports, it also asks Arch's package data what the program
-# needs (everything is still compiled here, from source: Arch only supplies the list).
-#
-# Avalon's ports are signed by you: the key lives in /etc/ports/avalon.{pub,sec} on this
-# machine and nowhere else, and pkgmk refuses a port whose files don't match its signature.
+#   metamelayer log                the log of the last install or upgrade
 set -e
-AVALON=${AVALON_SRC:-/usr/ports/avalon}
-PORTS=$AVALON/ports
-KEY=/etc/ports/avalon
-
-if [ -t 1 ]; then C=$(printf '\033['); else C=; fi   # colour on a terminal only (not in logs or dialog)
+SNAPSHOT=/usr/sbin/avalon-snapshot
+LOG=/var/log/metamelayer.log
+if [ -t 1 ]; then C=$(printf '\033['); else C=; fi   # colour on a terminal only
 say() { printf '%s==>%s %s\n' "${C:+${C}1;36m}" "${C:+${C}0m}" "$*"; }
 die() { printf '%smetamelayer:%s %s\n' "${C:+${C}1;35m}" "${C:+${C}0m}" "$*" >&2; exit 1; }
-root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo metamelayer $*"; }
+root() { [ "$(id -u)" = 0 ] || exec sudo "$0" "$CMD" "$@"; }
+need_slpkg() { command -v slpkg >/dev/null || die "slpkg isn't installed (it comes with Avalon: sudo upgradepkg --install-new it from the stick)"; }
+snap() { [ -x "$SNAPSHOT" ] && "$SNAPSHOT" take --auto "$@" || true; }
+logged() { echo "== $(date '+%F %T') $*" >> "$LOG"; "$@" 2>&1 | tee -a "$LOG"; }
 
-sync_ports() {
-	say "CRUX's ports"
-	ports -u
-	if [ -d "$AVALON/.git" ] && command -v git >/dev/null; then
-		say "Avalon's ports ($AVALON)"
-		git -C "$AVALON" pull --ff-only
-		[ -f "$KEY.sec" ] && sign_ports
-	fi
-	return 0
-}
-
-make_key() {
-	root key
-	[ -f "$KEY.sec" ] && { echo "You already have a key: $KEY.pub"; return 0; }
-	install -d -m 755 /etc/ports
-	# signify wants both names bare, in the same folder (keyname.pub and keyname.sec)
-	( cd "$(dirname "$KEY")" && signify -G -n -c "Avalon ports, signed on $(hostname)" \
-		-p "$(basename "$KEY").pub" -s "$(basename "$KEY").sec" )
-	chmod 600 "$KEY.sec"
-	say "Your key: $KEY.pub (the secret half, $KEY.sec, never leaves this machine)"
-}
-
-sign_ports() {
-	[ -f "$KEY.sec" ] || die "no key yet: sudo metamelayer key"
-	all=; if [ $# -eq 0 ]; then all=1; set -- $(ls "$PORTS"); fi
-	for p in "$@"; do
-		[ -f "$PORTS/$p/Pkgfile" ] || continue
-		if [ -n "$all" ]; then   # installed at the port's own version: nothing to build, so no need
-			want=$(bash -c '. "$1"; echo "$version-$release"' _ "$PORTS/$p/Pkgfile" 2>/dev/null)
-			[ "$(pkginfo -i 2>/dev/null | awk -v n="$p" '$1 == n {print $2}')" = "$want" ] && continue
-		fi
-		if ( cd "$PORTS/$p" && pkgmk -d -us -sk "$KEY.sec" >/tmp/metamelayer-sign.log 2>&1 ); then
-			echo "    signed $p"
-		else
-			echo "    could not sign $p: $(grep -m1 'ERROR' /tmp/metamelayer-sign.log | sed 's/^=*> *//')"
-		fi
-	done
-}
-
-# --- runtime dependencies (metamelayer-deps reads the programs; this acts on what it finds) ---
-
-DEPS=/usr/lib/avalon/metamelayer-deps
-[ -f "$DEPS" ] || DEPS=$AVALON/desktop/usr/lib/avalon/metamelayer-deps   # before avalon-desktop is installed
-installed() { pkginfo -i 2>/dev/null | sort; }
-
-SNAPSHOT=/usr/sbin/avalon-snapshot
-[ -f "$SNAPSHOT" ] || SNAPSHOT=$AVALON/desktop/usr/sbin/avalon-snapshot
-snap_first() { sh "$SNAPSHOT" take --auto "$@" || echo "    (no snapshot this time; carrying on)"; }
-
-fix() {
-	say "Looking for anything an update broke (programs whose libraries are missing)"
-	broken=$(python3 "$DEPS" check || true)
-	[ -n "$broken" ] || { echo "    nothing"; return 0; }
-	echo "    broken: $(echo $broken)"
-	for p in $broken; do
-		say "Rebuilding $p"
-		prt-get update -fr "$p" || echo "    $p didn't rebuild"
-	done
-	# shellcheck disable=SC2086
-	still=$(python3 "$DEPS" check $broken || true)
-	if [ -n "$still" ]; then
-		say "Still missing after rebuilding (often an optional part whose library isn't installed):"
-		# shellcheck disable=SC2086
-		python3 "$DEPS" explain $still
-	fi
-	return 0
-}
-
-arch_check() {   # Avalon's own ports among the names: what Arch says they need (advice; never stops)
-	ours=
-	for n in "$@"; do [ -f "$PORTS/$n/Pkgfile" ] && ours="$ours $n"; done
-	[ -n "$ours" ] || return 0
-	say "What Arch says$ours need"
-	# shellcheck disable=SC2086
-	python3 "$DEPS" arch $ours || echo "    (that's advice: the build goes ahead, and prt-get stops if something's really missing)"
-	return 0
-}
-
-LOGS=/var/log/pkgbuild
-failed_log() {   # the newest build log, which is the one that just stopped: its last lines
-	newest=$(ls -t "$LOGS"/*.log 2>/dev/null | head -1)
-	[ -n "$newest" ] || return 0
-	say "The build that stopped: $newest (all of it: metamelayer log $(basename "$newest" .log))"
-	tail -n 25 "$newest" | sed 's/^/    /'
-}
-
-libs_of() { pkginfo -l "$1" 2>/dev/null | grep -E '\.so(\.[0-9]+)*$' | sed 's|^|/|'; }
-
-rebuild_broken() {   # rebuild what can't find its libraries, in dependency order (they're usually tools)
-	for b in $(python3 "$DEPS" check --bumped 2>/dev/null); do
-		say "rebuild: $b (a library it was built against went in an update)"
-		prt-get update -fr "$b" || { failed_log; return 1; }
-	done
-}
-
-update_safely() {   # update these packages in the order given; after each, mend what it broke
-	rebuild_broken || return 1                   # anything already broken first (cmake, say)
-	for p in "$@"; do
-		before=$(libs_of "$p")
-		say "update: $p"
-		prt-get update "$p" || { failed_log; return 1; }
-		gone=; for f in $before; do [ -e "$f" ] || gone=1; done
-		[ -n "$gone" ] && { rebuild_broken || return 1; }
-	done
-	return 0
-}
-
-with_check() {   # run a prt-get command, then check what it changed and fix what broke
-	before=$(mktemp)
-	installed > "$before"
-	status=0
-	prt-get "$@" || status=$?
-	[ $status = 0 ] || failed_log
-	changed=$(installed | comm -13 "$before" - | cut -d' ' -f1)
-	rm -f "$before"
-	if [ -n "$changed" ]; then
-		say "What the new packages really need"
-		# shellcheck disable=SC2086
-		python3 "$DEPS" deps $changed ||
-			echo "    (a Pkgfile above misses a dependency: it works, but add it to that \"Depends on\" line)"
-	fi
-	fix
-	return $status
-}
-
-[ $# -ge 1 ] || { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-cmd=$1; shift
-case $cmd in
-	sync)            root sync; sync_ports ;;
-	install|in)      root install; [ $# -gt 0 ] || die "install what?"
-	                 arch_check "$@"; snap_first "before install $*"; with_check depinst "$@" ;;
-	remove|rm)       root remove; [ $# -gt 0 ] || die "remove what?"
-	                 snap_first "before remove $*"; exec prt-get remove "$@" ;;
-	upgrade|up)      root upgrade; sync_ports; snap_first "before upgrade"
-	                 out=" $(prt-get quickdiff) "
-	                 [ "$out" = "  " ] && { echo "    everything is up to date"; exit 0; }
-	                 # shellcheck disable=SC2046
-	                 order=$(for p in $(prt-get quickdep $out); do case $out in *" $p "*) echo "$p" ;; esac; done)
-	                 # shellcheck disable=SC2086
-	                 update_safely $order; status=$?; fix; exit $status ;;
-	update)          root update; [ $# -gt 0 ] || die "update what?"; update_safely "$@" ;;
-	snapshot)        root snapshot; exec sh "$SNAPSHOT" take "$@" ;;
-	snapshots)       exec sh "$SNAPSHOT" list ;;
-	rollback)        root rollback; exec sh "$SNAPSHOT" rollback "$@" ;;
-	forget)          root forget; exec sh "$SNAPSHOT" forget "$@" ;;
-	search|s)        exec prt-get search "$@" ;;
-	info)            exec prt-get info "$@" ;;
-	list|ls)         exec prt-get listinst ;;
-	diff)            exec prt-get diff ;;
-	hold)            root hold; [ $# -gt 0 ] || die "hold what?"
-	                 for p in "$@"; do prt-get lock "$p" && echo "    $p held"; done ;;
-	unhold)          root unhold; [ $# -gt 0 ] || die "unhold what?"
-	                 for p in "$@"; do prt-get unlock "$p" && echo "    $p will update again"; done ;;
-	held)            exec prt-get listlocked ;;
-	new)             root new; [ $# -eq 1 ] || die "new: one name (metamelayer new NAME)"
-	                 python3 "$DEPS" new "$1" "$PORTS" || exit $?
-	                 echo "Next: put the source address in $PORTS/$1/Pkgfile, then"
-	                 echo "      sudo metamelayer sign $1 && sudo metamelayer install $1" ;;
-	cache)           command -v ccache >/dev/null || die "ccache isn't installed (sudo metamelayer install ccache)"
-	                 CCACHE_DIR=${CCACHE_DIR:-/var/cache/ccache} exec ccache -s ;;
-	deps)            [ $# -gt 0 ] || die "deps of what?"; exec python3 "$DEPS" deps "$@" ;;
-	check)           broken=$(python3 "$DEPS" check "$@" || true)
-	                 [ -n "$broken" ] || { say "Nothing is broken"; exit 0; }
-	                 # shellcheck disable=SC2086
-	                 python3 "$DEPS" explain $broken; exit 1 ;;
-	fix)             root fix; fix ;;
-	log)             if [ $# -gt 0 ]; then f=$LOGS/$1.log; else f=$(ls -t "$LOGS"/*.log 2>/dev/null | head -1); fi
-	                 [ -n "$f" ] && [ -f "$f" ] || die "no build log${1:+ for $1} (in $LOGS)"
-	                 exec "${PAGER:-less}" "$f" ;;
-	arch)            [ $# -gt 0 ] || die "arch: which packages?"; exec python3 "$DEPS" arch "$@" ;;
-	key)             make_key ;;
-	sign)            root sign; sign_ports "$@" ;;
-	flatpak|fp)      verb=${1:-list}; shift || true
-	                 case $verb in
-	                   install|in) exec flatpak install -y flathub "$@" ;;
-	                   remove|rm)  exec flatpak uninstall -y "$@" ;;
-	                   update|up)  exec flatpak update -y ;;
-	                   list|ls)    exec flatpak list --app ;;
-	                   search|s)   exec flatpak search "$@" ;;
-	                   *)          die "flatpak: install, remove, update, list or search" ;;
-	                 esac ;;
-	*)               die "unknown command '$cmd' (metamelayer with no arguments lists them)" ;;
+CMD=${1:-help}; [ $# -gt 0 ] && shift
+case $CMD in
+	sync)       root "$@"; need_slpkg; logged slpkg update -y ;;
+	install|in) root "$@"; need_slpkg; [ $# -gt 0 ] || die "install what?"
+	            snap "before install $*"; logged slpkg install -o all -y "$@" ;;
+	remove|rm)  root "$@"; need_slpkg; [ $# -gt 0 ] || die "remove what?"
+	            snap "before remove $*"; logged slpkg remove -y "$@" ;;
+	upgrade|up) root "$@"; need_slpkg
+	            say "The repositories' latest lists"; logged slpkg update -y
+	            snap "before upgrade"
+	            # no -y here: after a kernel update, slpkg's -y would also say yes to rebooting
+	            say "Upgrading (Slackware's own first, then the others)"; slpkg upgrade -o all
+	            say "Anything an upgrade left without its libraries"
+	            slpkg check-broken || echo "    (rebuild each one listed above with:  sudo slpkg rebuild NAME)" ;;
+	search|s)   need_slpkg; [ $# -gt 0 ] || die "search for what?"; exec slpkg search -o all "$@" ;;
+	info)       need_slpkg; [ $# -gt 0 ] || die "info on what?"; exec slpkg info -o all "$@" ;;
+	list|ls)    need_slpkg; exec slpkg list "$@" ;;
+	needs)      need_slpkg; exec slpkg depends -o all "$@" ;;
+	used-by)    need_slpkg; exec slpkg reverse "$@" ;;
+	check)      need_slpkg; exec slpkg check-broken "$@" ;;
+	hold)       root "$@"; need_slpkg; [ $# -gt 0 ] || die "hold what?"; exec slpkg pin "$@" ;;
+	unhold)     root "$@"; need_slpkg; [ $# -gt 0 ] || die "unhold what?"; exec slpkg pin --unpin "$@" ;;
+	held)       need_slpkg; exec slpkg pin ;;
+	history)    need_slpkg; exec slpkg history "$@" ;;
+	snapshot)   root "$@"; exec "$SNAPSHOT" take "$@" ;;
+	snapshots)  exec "$SNAPSHOT" list ;;
+	rollback)   root "$@"; exec "$SNAPSHOT" rollback "$@" ;;
+	forget)     root "$@"; exec "$SNAPSHOT" forget "$@" ;;
+	log)        exec "${PAGER:-less}" "$LOG" ;;
+	help|-h|--help|*)
+	            sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+	            [ "$CMD" = help ] || [ "$CMD" = -h ] || [ "$CMD" = --help ] || exit 2 ;;
 esac

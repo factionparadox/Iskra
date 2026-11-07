@@ -22,12 +22,14 @@ HERE = Path(__file__).resolve().parents[1]
 PONCE_URL = 'https://github.com/Ponce/slackbuilds.git'
 PONCE_COMMIT = '39eee7577fc1824b5ea716844662b91adee5bf24'      # branch current, 31 Oct 2026
 # what Ponce's recipes call by another name in Slackware itself
-ALIASES = {'rust-opt': 'rust', 'AppStream': 'appstream'}
+ALIASES = {'rust-opt': 'rust', 'AppStream': 'appstream', 'python3-tomlkit': 'python-tomlkit'}
 # set-up a recipe needs in ROOT before it will build (greetd insists its user exists)
 PREPARE = {
     'greetd': 'getent group greeter >/dev/null || groupadd -g 381 greeter; '
               'getent passwd greeter >/dev/null || useradd -d /var/lib/greeter -u 381 -g greeter -G video -s /bin/false greeter',
 }
+# small corrections to a Ponce recipe, so nothing is fetched from the network mid-build
+TWEAKS = {}
 ENV_KEEP = ('https_proxy', 'http_proxy', 'no_proxy', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO')
 
 
@@ -58,7 +60,11 @@ class Builder:
         env = {'HOME': '/root', 'TERM': 'dumb', 'LANG': 'C.UTF-8',
                'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
                'MAKEFLAGS': f'-j{os.cpu_count()}'}
-        env.update({k: os.environ[k] for k in ENV_KEEP if k in os.environ})
+        for k in ENV_KEEP:
+            v = os.environ.get(k)
+            # a certificate file of the host means nothing inside ROOT, and a missing one breaks git and curl
+            if v and (not k.isupper() or (self.root / v.lstrip('/')).exists()):
+                env[k] = v
         args = ['chroot', str(self.root), 'env', '-i', *[f'{k}={v}' for k, v in env.items()], *cmd]
         r = subprocess.run(args, text=True, stdin=subprocess.DEVNULL)
         if check and r.returncode:
@@ -216,6 +222,8 @@ class Builder:
             else:
                 raise SystemExit(f'build-packages: {name} requires {r}, which neither Slackware, Avalon nor Ponce has')
         parts = [src, HERE / 'packages/lib.sh' if own else '', version]
+        if name in TWEAKS:
+            parts.append(repr(TWEAKS[name]))
         if 'avalon-source' in info.get('DOWNLOAD', ''):
             parts.append(subprocess.run(['git', '-C', str(HERE), 'ls-files', '-s'], capture_output=True,
                                         text=True).stdout)   # every file of this repository, by content
@@ -232,6 +240,12 @@ class Builder:
         shutil.rmtree(d, ignore_errors=True)
         shutil.copytree(src, d)
         shutil.copy2(HERE / 'packages/lib.sh', self.work / 'lib.sh')
+        for old, new in TWEAKS.get(name, []):
+            sb = d / f'{name}.SlackBuild'
+            text = sb.read_text()
+            if old not in text:
+                raise SystemExit(f'build-packages: {name}.SlackBuild has changed; the Avalon tweak no longer fits')
+            sb.write_text(text.replace(old, new, 1))
         inf = d / f'{name}.info'
         inf.write_text(inf.read_text().replace('"@AVALON@"', f'"{version}"'))
         self.fetch(d, info)

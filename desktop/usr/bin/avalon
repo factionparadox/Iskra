@@ -1,7 +1,7 @@
 #!/bin/sh
 # avalon: Avalon's own commands.
 #   avalon power suspend|reboot|off     the session's power actions
-#   avalon update                       sync the ports and upgrade (Metamelayer)
+#   avalon update                       bring everything up to date (Metamelayer)
 #   avalon neredy setup [small|large]   download a model for Neredy (see: neredy)
 #   avalon version
 case $1 in
