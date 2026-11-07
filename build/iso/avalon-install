@@ -26,7 +26,7 @@ setfont latarcyrheb-sun32 2>/dev/null
 d --title " Avalon " --msgbox "\n\
 Pasha keeps the garden.\n\n\
 This puts \Zb\Z6Avalon\Zn on this laptop: CRUX, with the Garden System on top.\n\n\
-Nothing is downloaded or compiled now. The first time Avalon starts, it gets online (you\n\
+Nothing is downloaded or compiled now. The first time Avalon starts, it gets online (you \
 choose your Wi-Fi then) and builds itself on this laptop, which takes a while.\n\n\
 \Z3Up/Down\Zn choose · \Z3Tab\Zn moves between buttons · \Z3Enter\Zn confirms · \Z3Esc\Zn backs out" 17 78 \
 	|| quit "Stopped; nothing was touched."
@@ -82,6 +82,11 @@ if ! grep -q " $ROOT " /proc/mounts; then
 			|| quit "Stopped; nothing was touched."
 		DISK=${DISK#/dev/}
 		[ -b "/dev/$DISK" ] || quit "There's no disk called /dev/$DISK."
+	fi
+	if readlink -f "/sys/block/$DISK" | grep -q '/pci1[0-9a-f]\{4\}:'; then
+		quit "$DISK sits behind Intel VMD (Intel RST). Avalon's kernel starts without an initramfs and
+can't reach a disk there. In the laptop's firmware setup, turn VMD off (storage as plain
+NVMe/AHCI), then start the installer again. Nothing was touched."
 	fi
 	d --title " Erase it? " --defaultno --yesno "\n\Zb\Z1Everything on $DISK will be erased.\Zn\n\n\
 $(disk_info "$DISK")\n\n\
@@ -276,7 +281,7 @@ sync
 if d --title " Installed " --yes-label "Restart" --no-label "Not yet" --yesno "\n\
 \Zb\Z2Avalon is installed.\Zn\n\n\
 Take the USB stick out, then restart.\n\n\
-On its first start, Avalon asks for your Wi-Fi and builds itself (you can watch), then\n\
+On its first start, Avalon asks for your Wi-Fi and builds itself (you can watch), then \
 restarts into the Garden System, where you log in as \Zb$USER_NAME\Zn." 14 72; then
 	umount -R $ROOT 2>/dev/null
 	reboot

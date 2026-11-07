@@ -202,8 +202,8 @@ desktop-color: "#000006"
 terminal-font: "DejaVu Sans Regular 34"
 
 + boot_menu {
-	left = 36.5%
-	top = 64.5%
+	left = 36%+14
+	top = 64%+10
 	width = 58%
 	height = 23%
 	item_font = "DejaVu Sans Bold 52"
@@ -221,7 +221,7 @@ terminal-font: "DejaVu Sans Regular 34"
 
 + label {
 	left = 35%
-	top = 90.2%
+	top = 90%+4
 	width = 61%
 	align = "right"
 	id = "__timeout__"

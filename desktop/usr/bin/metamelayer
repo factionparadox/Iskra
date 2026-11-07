@@ -82,11 +82,18 @@ make_key() {
 
 sign_ports() {
 	[ -f "$KEY.sec" ] || die "no key yet: sudo metamelayer key"
-	if [ $# -eq 0 ]; then set -- $(ls "$PORTS"); fi
+	local all=; if [ $# -eq 0 ]; then all=1; set -- $(ls "$PORTS"); fi
 	for p in "$@"; do
 		[ -f "$PORTS/$p/Pkgfile" ] || continue
-		( cd "$PORTS/$p" && pkgmk -d -us -sk "$KEY.sec" >/dev/null ) && echo "    signed $p" ||
-			echo "    could not sign $p (its sources didn't download?)"
+		if [ -n "$all" ]; then   # installed at the port's own version: nothing to build, so no need
+			want=$(bash -c '. "$1"; echo "$version-$release"' _ "$PORTS/$p/Pkgfile" 2>/dev/null)
+			[ "$(pkginfo -i 2>/dev/null | awk -v n="$p" '$1 == n {print $2}')" = "$want" ] && continue
+		fi
+		if ( cd "$PORTS/$p" && pkgmk -d -us -sk "$KEY.sec" >/tmp/metamelayer-sign.log 2>&1 ); then
+			echo "    signed $p"
+		else
+			echo "    could not sign $p: $(grep -m1 'ERROR' /tmp/metamelayer-sign.log | sed 's/^=*> *//')"
+		fi
 	done
 }
 

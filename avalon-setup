@@ -104,7 +104,21 @@ if [ -n "$OFFLINE" ]; then
 fi
 
 say "CRUX's ports, brought up to date"
-ports -u
+# CRUX fetches its ports with rsync (port 873), which some networks block. Any collection that
+# didn't arrive switches to CRUX's HTTPS mirror (httpup) for good, and nothing is built from a
+# half-fetched tree: if neither gets through, it stops here and says so
+# (a port each collection always has shows it arrived whole, not cut off half way)
+ports -u || true
+for c in core:glibc opt:qt6-base xorg:mesa contrib:wlroots; do
+	key=${c#*:}; c=${c%:*}
+	[ -f /usr/ports/$c/$key/Pkgfile ] && continue
+	echo "    $c: rsync didn't get through (port 873 blocked?): using CRUX's HTTPS mirror instead"
+	printf 'ROOT_DIR=/usr/ports/%s\nURL=https://crux.nu/ports/crux-3.8/%s/\n' $c $c > /etc/ports/$c.httpup
+	[ -f /etc/ports/$c.rsync ] && mv /etc/ports/$c.rsync /etc/ports/$c.rsync.inactive
+	if ! ports -u $c || [ ! -f /usr/ports/$c/$key/Pkgfile ]; then
+		die "couldn't fetch CRUX's $c ports, over rsync or HTTPS. Check the network, then choose Try again"
+	fi
+done
 metamelayer sign
 
 # everything Avalon needs, in the order it has to be built

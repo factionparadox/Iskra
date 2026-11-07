@@ -17,7 +17,15 @@ USER_NAME=$(cat $FLAG)
 setfont latarcyrheb-sun32 2>/dev/null
 
 d() { dialog --backtitle "$TITLE" --colors "$@" 3>&1 1>&2 2>&3; }
-online() { ping -c 1 -W 3 crux.nu >/dev/null 2>&1 || ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; }
+# online: any answer from a web server (CRUX has no ping: iputils isn't in core; curl is)
+online() {
+	local u code
+	for u in http://crux.nu/ http://1.1.1.1/; do
+		code=$(curl -s -o /dev/null -m 8 -w '%{http_code}' "$u" 2>/dev/null)
+		[ -n "$code" ] && [ "$code" != 000 ] && return 0
+	done
+	return 1
+}
 rows() { echo $(( $(tput lines 2>/dev/null || echo 40) - 6 )); }
 cols() { echo $(( $(tput cols 2>/dev/null || echo 120) - 6 )); }
 
@@ -42,7 +50,7 @@ get_online() {
 	while :; do
 		if [ -z "$IF" ]; then
 			d --title " Online " --yes-label "Look again" --no-label "Shell" --yesno \
-				"\nNo Wi-Fi card was found. Plug in a cable (or a phone, tethering over USB),\nthen choose Look again." 10 70 \
+				"\nNo Wi-Fi card was found. Plug in a cable (or a phone, tethering over USB), then choose Look again." 10 70 \
 				|| { clear; echo "Type  avalon-firstboot  when you're online."; exit 0; }
 			dhcpcd -w -t 15 >/dev/null 2>&1; online && return 0; IF=$(wifi_if); continue
 		fi
@@ -98,8 +106,8 @@ get_online() {
 # --- 2. build ---------------------------------------------------------------------------
 
 d --title " Hello " --msgbox "\n\Zb\Z6Avalon\Zn is starting for the first time.\n\n\
-First it gets online, then it builds itself on this laptop: Mango, Quickshell, greetd and the\n\
-rest. That takes a while; the build scrolls past so you can watch. When it's done, it restarts\n\
+First it gets online, then it builds itself on this laptop: Mango, Quickshell, greetd and the \
+rest. That takes a while; the build scrolls past so you can watch. When it's done, it restarts \
 into the Garden System." 13 76
 
 get_online
