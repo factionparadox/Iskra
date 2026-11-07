@@ -212,7 +212,15 @@ steps() {
 
 	say "You and root"
 	grep -q "^$USER_NAME:" $ROOT/etc/passwd || inroot useradd -m -s /bin/bash "$USER_NAME"
-	printf '%s:%s\nroot:%s\n' "$USER_NAME" "$USER_PW" "$ROOT_PW" | inroot chpasswd
+	# (CRUX's shadow leaves chpasswd out: openssl makes the hash, usermod sets it)
+	setpw() {   # setpw PASSWORD USER: a failure here stops the install, rather than leaving no password
+		local hash
+		hash=$(printf '%s\n' "$1" | inroot openssl passwd -6 -stdin)
+		[ -n "$hash" ] || { echo "couldn't make a password hash for $2"; return 1; }
+		inroot usermod -p "$hash" "$2"
+	}
+	setpw "$USER_PW" "$USER_NAME"
+	setpw "$ROOT_PW" root
 	inroot sh /usr/ports/avalon/avalon-setup --offline "$USER_NAME"
 
 	say "GRUB (UEFI), on ${ESP#$ROOT}, with the Garden's boot screen"

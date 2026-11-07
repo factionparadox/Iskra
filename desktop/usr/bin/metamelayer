@@ -61,7 +61,7 @@ root() { [ "$(id -u)" = 0 ] || die "this needs root: sudo metamelayer $*"; }
 sync_ports() {
 	say "CRUX's ports"
 	ports -u
-	if [ -d "$AVALON/.git" ]; then
+	if [ -d "$AVALON/.git" ] && command -v git >/dev/null; then
 		say "Avalon's ports ($AVALON)"
 		git -C "$AVALON" pull --ff-only
 		[ -f "$KEY.sec" ] && sign_ports
