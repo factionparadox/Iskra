@@ -12,7 +12,9 @@ package that owns that file (from pkgutils' database).
     metamelayer-deps check [NAME...] packages with a library that can't be found: broken, usually
                                      by an update to a library they were built against. Prints
                                      their names, one per line, in an order to rebuild them in;
-                                     exits 1 if there are any
+                                     exits 1 if there are any. With --bumped: only those missing
+                                     a library that's here in another version (an update changed
+                                     it), not an optional one that was never installed
     metamelayer-deps explain NAME    for each broken file in a package: which library is missing
     metamelayer-deps arch NAME...    before building: what Arch Linux's package (or the AUR's) says
                                      NAME needs to run and to build, matched to CRUX's ports: which
@@ -24,6 +26,7 @@ package that owns that file (from pkgutils' database).
 Runtime dependencies found by `deps` are kept in /var/lib/avalon/rdeps/NAME.
 Only reads (apart from `new`, which writes one new Pkgfile): it never changes the system (metamelayer does the rebuilding).
 """
+import glob
 import os
 import re
 import signal
@@ -260,7 +263,18 @@ def cmd_deps(names):
     return 2 if missing_any else 0
 
 
-def cmd_check(names):
+def bumped(s, soname):
+    """another version of this library is here (libjsoncpp.so.26 gone, libjsoncpp.so.27 present):
+    an update changed it, as opposed to an optional library that was never installed"""
+    base = soname.split('.so', 1)[0] + '.so'
+    if base == soname or not base.startswith('lib'):
+        return False
+    if any(k != soname and k.startswith(base) for k in s.cache):
+        return True
+    return any(glob.glob(os.path.join(d, base + '*')) for d in DEFAULT_DIRS)
+
+
+def cmd_check(names, only_bumped=False):
     s = System()
     pool = names or sorted(s.files)
     broken = {}
@@ -268,6 +282,9 @@ def cmd_check(names):
     for name in pool:
         deps, b = s.scan(name)
         deps_of[name] = deps
+        if only_bumped:
+            b = {f: [so for so in sos if bumped(s, so)] for f, sos in b.items()}
+            b = {f: sos for f, sos in b.items() if sos}
         if b:
             broken[name] = b
     # rebuild order: a broken package after any broken package it depends on
@@ -592,6 +609,8 @@ def main(argv):
     if cmd == 'deps':
         return cmd_deps(names) if names else (print('deps: which packages?'), 2)[1]
     if cmd == 'check':
+        if names[:1] == ['--bumped']:
+            return cmd_check(names[1:], only_bumped=True)
         return cmd_check(names)
     if cmd == 'explain':
         return cmd_explain(names)

@@ -13,6 +13,8 @@
 #   metamelayer hold NAME...       keep these at the version they are: upgrade leaves them alone
 #   metamelayer unhold NAME...     let upgrade update them again
 #   metamelayer held               what's held
+#   metamelayer update NAME...     update these, one at a time; if an update takes a library away,
+#                                  what used it is rebuilt at once (upgrade does the same)
 #   metamelayer deps NAME...       what a package really needs, read from its programs, and what
 #                                  its Pkgfile's "Depends on" line misses
 #   metamelayer check [NAME...]    packages with a library missing (broken by an update)
@@ -83,7 +85,7 @@ make_key() {
 
 sign_ports() {
 	[ -f "$KEY.sec" ] || die "no key yet: sudo metamelayer key"
-	local all=; if [ $# -eq 0 ]; then all=1; set -- $(ls "$PORTS"); fi
+	all=; if [ $# -eq 0 ]; then all=1; set -- $(ls "$PORTS"); fi
 	for p in "$@"; do
 		[ -f "$PORTS/$p/Pkgfile" ] || continue
 		if [ -n "$all" ]; then   # installed at the port's own version: nothing to build, so no need
@@ -145,6 +147,27 @@ failed_log() {   # the newest build log, which is the one that just stopped: its
 	tail -n 25 "$newest" | sed 's/^/    /'
 }
 
+libs_of() { pkginfo -l "$1" 2>/dev/null | grep -E '\.so(\.[0-9]+)*$' | sed 's|^|/|'; }
+
+rebuild_broken() {   # rebuild what can't find its libraries, in dependency order (they're usually tools)
+	for b in $(python3 "$DEPS" check --bumped 2>/dev/null); do
+		say "rebuild: $b (a library it was built against went in an update)"
+		prt-get update -fr "$b" || { failed_log; return 1; }
+	done
+}
+
+update_safely() {   # update these packages in the order given; after each, mend what it broke
+	rebuild_broken || return 1                   # anything already broken first (cmake, say)
+	for p in "$@"; do
+		before=$(libs_of "$p")
+		say "update: $p"
+		prt-get update "$p" || { failed_log; return 1; }
+		gone=; for f in $before; do [ -e "$f" ] || gone=1; done
+		[ -n "$gone" ] && { rebuild_broken || return 1; }
+	done
+	return 0
+}
+
 with_check() {   # run a prt-get command, then check what it changed and fix what broke
 	before=$(mktemp)
 	installed > "$before"
@@ -163,7 +186,7 @@ with_check() {   # run a prt-get command, then check what it changed and fix wha
 	return $status
 }
 
-[ $# -ge 1 ] || { sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd=$1; shift
 case $cmd in
 	sync)            root sync; sync_ports ;;
@@ -171,7 +194,14 @@ case $cmd in
 	                 arch_check "$@"; snap_first "before install $*"; with_check depinst "$@" ;;
 	remove|rm)       root remove; [ $# -gt 0 ] || die "remove what?"
 	                 snap_first "before remove $*"; exec prt-get remove "$@" ;;
-	upgrade|up)      root upgrade; sync_ports; snap_first "before upgrade"; with_check sysup ;;
+	upgrade|up)      root upgrade; sync_ports; snap_first "before upgrade"
+	                 out=" $(prt-get quickdiff) "
+	                 [ "$out" = "  " ] && { echo "    everything is up to date"; exit 0; }
+	                 # shellcheck disable=SC2046
+	                 order=$(for p in $(prt-get quickdep $out); do case $out in *" $p "*) echo "$p" ;; esac; done)
+	                 # shellcheck disable=SC2086
+	                 update_safely $order; status=$?; fix; exit $status ;;
+	update)          root update; [ $# -gt 0 ] || die "update what?"; update_safely "$@" ;;
 	snapshot)        root snapshot; exec sh "$SNAPSHOT" take "$@" ;;
 	snapshots)       exec sh "$SNAPSHOT" list ;;
 	rollback)        root rollback; exec sh "$SNAPSHOT" rollback "$@" ;;

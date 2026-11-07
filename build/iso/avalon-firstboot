@@ -157,7 +157,19 @@ get_online
 SNAPSHOT=/usr/sbin/avalon-snapshot; [ -x $SNAPSHOT ] || SNAPSHOT=/usr/ports/avalon/desktop/usr/sbin/avalon-snapshot
 ls -d /.snapshots/*-fresh-install >/dev/null 2>&1 || sh $SNAPSHOT take "fresh install" 2>&1 | tee -a $LOG || true
 
+refresh_avalon() {   # Avalon's latest scripts and ports from GitHub, over the copy from the stick
+	local t; t=$(mktemp -d)
+	if curl -fsSL -m 120 https://codeload.github.com/factionparadox/avalon/tar.gz/refs/heads/main |
+		tar -xz -C "$t" 2>/dev/null && [ -f "$t"/avalon-main/avalon-setup ]; then
+		cp -a "$t"/avalon-main/. /usr/ports/avalon/ && echo "==> Avalon's scripts and ports: the latest, from GitHub"
+	else
+		echo "==> (couldn't reach GitHub: using Avalon as it came on the stick)"
+	fi
+	rm -rf "$t"
+}
+
 while :; do
+	refresh_avalon 2>&1 | tee -a $LOG
 	{ /usr/ports/avalon/avalon-setup "$USER_NAME"; echo $? > /run/avalon-firstboot.rc; } 2>&1 | tee -a $LOG |
 		dialog --backtitle "$TITLE" --title " Building Avalon (log: $LOG) " --progressbox "$(rows)" "$(cols)"
 	[ "$(cat /run/avalon-firstboot.rc 2>/dev/null)" = 0 ] && break

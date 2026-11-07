@@ -145,10 +145,14 @@ if [ -d "$DISC" ]; then
 fi
 
 say "Bringing older packages Avalon needs up to date"
+# one at a time, in dependency order; an update that takes a library away gets whatever used it
+# rebuilt at once (metamelayer update), so a tool the next build needs never stays broken
 old=" $(prt-get quickdiff) "
-for p in $(closure); do
-	case "$old" in *" $p "*) say "update: $p"; prt-get update "$p" ;; esac
-done
+todo=$(for p in $(closure); do case "$old" in *" $p "*) echo "$p" ;; esac; done)
+if [ -n "$todo" ]; then
+	# shellcheck disable=SC2086
+	metamelayer update $todo || die "an update didn't build (its log is above)"
+fi
 
 say "Building the rest of Avalon (the long part: Mango, Quickshell, greetd and what they need)"
 prt-get depinst avalon
