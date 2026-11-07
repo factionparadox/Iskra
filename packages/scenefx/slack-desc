@@ -1,0 +1,17 @@
+# HOW TO EDIT THIS FILE:
+# The "handy ruler" below makes it easier to edit a package description.
+# Line up the first '|' above the ':' following the base package name, and
+# the '|' on the right side marks the last column you can put a character in.
+
+  |-----handy-ruler------------------------------------------------------|
+scenefx: scenefx (blur, shadows and rounded corners for wlroots)
+scenefx:
+scenefx: scenefx swaps wlroots' scene renderer for one with effects;
+scenefx: Mango draws its blur, shadows and rounded corners with it.
+scenefx:
+scenefx:
+scenefx: Homepage: https://github.com/wlrfx/scenefx
+scenefx:
+scenefx:
+scenefx:
+scenefx:

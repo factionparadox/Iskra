@@ -1,0 +1,7 @@
+PRGNAM="llama.cpp"
+VERSION="0.8.0"
+HOMEPAGE="https://github.com/ggml-org/llama.cpp"
+DOWNLOAD="https://github.com/ggml-org/llama.cpp/releases/download/b11960/llama-b11960-bin-ubuntu-vulkan-x64.tar.gz"
+SHA256SUM="164199e978304bb32a8a6c24b8efa015528ddf286821596eab676c90b375feac"
+REQUIRES=""
+MAINTAINER="Avalon"

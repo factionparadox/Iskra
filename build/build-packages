@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Build Avalon's packages (packages/LIST) inside a Slackware -current system.
+
+  sudo build/build-packages ROOT OUT [NAME...]     default: everything in packages/LIST, in order
+
+ROOT is a Slackware -current system in a folder (build/slackware-root makes one). Each package is
+built in it with chroot, installed in it as it's made (so later ones can use it), and copied to OUT.
+A package already in OUT, made from exactly the same recipe and sources, is not built again.
+
+Each kind of entry in packages/LIST:
+  avalon:DIR   packages/DIR: DIR.info (VERSION, DOWNLOAD, SHA256SUM, REQUIRES) and DIR.SlackBuild.
+               A DOWNLOAD of  git+URL#commit=HASH  is fetched with git, at exactly that commit;
+               avalon-source is this repository's own files, as they are now.
+  ponce:PATH   Ponce's SlackBuild for -current (at PONCE_COMMIT below); its checksums are checked,
+               and each thing it REQUIRES is Slackware's own (already in ROOT) or is built first
+               from Ponce's tree too.
+"""
+import hashlib, json, os, re, shutil, subprocess, sys, time, urllib.error, urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parents[1]
+PONCE_URL = 'https://github.com/Ponce/slackbuilds.git'
+PONCE_COMMIT = '39eee7577fc1824b5ea716844662b91adee5bf24'      # branch current, 31 Oct 2026
+# what Ponce's recipes call by another name in Slackware itself
+ALIASES = {'rust-opt': 'rust', 'AppStream': 'appstream'}
+# set-up a recipe needs in ROOT before it will build (greetd insists its user exists)
+PREPARE = {
+    'greetd': 'getent group greeter >/dev/null || groupadd -g 381 greeter; '
+              'getent passwd greeter >/dev/null || useradd -d /var/lib/greeter -u 381 -g greeter -G video -s /bin/false greeter',
+}
+ENV_KEEP = ('https_proxy', 'http_proxy', 'no_proxy', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO')
+
+
+def say(*a):
+    print('==>', *a, flush=True)
+
+
+def user_cache():
+    user = os.environ.get('SUDO_USER')
+    home = Path(os.path.expanduser(f'~{user}')) if user else Path.home()
+    return home / '.cache/avalon'
+
+
+class Builder:
+    def __init__(self, root, out):
+        self.root, self.out = Path(root), Path(out)
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.work = self.root / 'tmp/avalon-build'
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.done = set()
+        self.keep = set()
+        self.statefile = self.out / 'built.json'        # name -> fingerprint of what it was made from
+        self.state = json.loads(self.statefile.read_text()) if self.statefile.is_file() else {}
+        self.ponce = self._ponce_tree()
+
+    # ------------------------------------------------------------ running things in ROOT
+    def chroot(self, *cmd, check=True):
+        env = {'HOME': '/root', 'TERM': 'dumb', 'LANG': 'C.UTF-8',
+               'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+               'MAKEFLAGS': f'-j{os.cpu_count()}'}
+        env.update({k: os.environ[k] for k in ENV_KEEP if k in os.environ})
+        args = ['chroot', str(self.root), 'env', '-i', *[f'{k}={v}' for k, v in env.items()], *cmd]
+        r = subprocess.run(args, text=True, stdin=subprocess.DEVNULL)
+        if check and r.returncode:
+            raise SystemExit(f'build-packages: failed in {self.root}: {" ".join(cmd)}')
+        return r.returncode
+
+    def installed(self, name):
+        db = self.root / 'var/lib/pkgtools/packages'
+        return any(f.name.rsplit('-', 3)[0] == name for f in db.iterdir())
+
+    # ------------------------------------------------------------ Ponce's tree, at a pinned commit
+    def _ponce_tree(self):
+        d = user_cache() / 'ponce'
+        if (d / '.git').is_dir():
+            have = subprocess.run(['git', '-C', str(d), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+            if have == PONCE_COMMIT:
+                return d
+            shutil.rmtree(d)
+        say(f"Ponce's SlackBuilds for -current, at {PONCE_COMMIT[:12]}")
+        d.mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(d)], check=True)
+        subprocess.run(['git', '-C', str(d), 'fetch', '-q', '--depth', '1', PONCE_URL, PONCE_COMMIT], check=True)
+        subprocess.run(['git', '-C', str(d), 'checkout', '-q', 'FETCH_HEAD'], check=True)
+        return d
+
+    _pidx = None
+
+    def ponce_index(self):
+        if self._pidx is None:
+            self._pidx = {p.parent.name: p.parent for p in self.ponce.glob('*/*/*.info') if p.stem == p.parent.name}
+        return self._pidx
+
+    # ------------------------------------------------------------ sources
+    def fetch(self, d, info):
+        """Download a SlackBuild's sources into its folder and check them."""
+        urls = (info.get('DOWNLOAD_x86_64') or info.get('DOWNLOAD', '')).split()
+        urls = [u for u in urls if u not in ('UNSUPPORTED', 'UNTESTED')]
+        sha = (info.get('SHA256SUM_x86_64') or info.get('SHA256SUM', '')).split()
+        md5 = (info.get('MD5SUM_x86_64') or info.get('MD5SUM', '')).split()
+        cache = user_cache() / 'sources'
+        cache.mkdir(parents=True, exist_ok=True)
+        for i, u in enumerate(urls):
+            if u == 'avalon-source':                      # this repository's own files, as they are now
+                files = subprocess.run(['git', '-C', str(HERE), 'ls-files', '-z'], capture_output=True,
+                                       check=True).stdout.split(b'\0')
+                files = [f.decode() for f in files if f and (HERE / f.decode()).exists()]
+                subprocess.run(['tar', '-czf', str(d / 'avalon-source.tar.gz'), '-C', str(HERE), '--owner=0',
+                                '--group=0', '--null', '-T', '-'], input='\0'.join(files).encode(), check=True)
+                print(f'    avalon-source.tar.gz  (this repository, {len(files)} files)')
+                continue
+            if u.startswith('git+'):
+                url, _, frag = u[4:].partition('#')
+                commit = frag.removeprefix('commit=')
+                if not re.fullmatch(r'[0-9a-f]{40}', commit):
+                    raise SystemExit(f'build-packages: {d.name}: a git source must pin a full commit: {u}')
+                name = f"{Path(url).stem}-{commit}"
+                cached = cache / f'{name}.tar.gz'
+                if not cached.is_file():
+                    g = cache / f'.{name}.git'
+                    shutil.rmtree(g, ignore_errors=True)
+                    subprocess.run(['git', 'init', '-q', str(g)], check=True)
+                    subprocess.run(['git', '-C', str(g), 'fetch', '-q', '--depth', '1', url, commit], check=True)
+                    got = subprocess.run(['git', '-C', str(g), 'rev-parse', 'FETCH_HEAD'], text=True,
+                                         capture_output=True, check=True).stdout.strip()
+                    if got != commit:
+                        raise SystemExit(f'build-packages: {d.name}: got {got}, not the pinned {commit}')
+                    subprocess.run(['git', '-C', str(g), 'archive', '--format=tar.gz', f'--prefix={name}/',
+                                    '-o', str(cached), 'FETCH_HEAD'], check=True)
+                    shutil.rmtree(g)
+                shutil.copy2(cached, d / cached.name)
+                print(f'    {cached.name}  (git, commit {commit[:12]})')
+                continue
+            fname = Path(u.split('?')[0]).name
+            f = cache / fname
+            if not f.is_file():
+                print(f'    downloading {fname}', flush=True)
+                req = urllib.request.Request(u, headers={'User-Agent': 'Avalon package builder'})
+                for attempt in range(1, 5):       # a dropped connection is tried again, not fatal
+                    try:
+                        with urllib.request.urlopen(req, timeout=120) as r, open(f.with_name(fname + '.part'), 'wb') as o:
+                            shutil.copyfileobj(r, o)
+                        break
+                    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+                        if attempt == 4 or (isinstance(e, urllib.error.HTTPError) and e.code < 500):
+                            raise SystemExit(f'build-packages: {d.name}: could not download {u}: {e}')
+                        print(f'    {e}; trying again ({attempt + 1} of 4)', flush=True)
+                        time.sleep(5 * attempt)
+                f.with_name(fname + '.part').rename(f)
+            data = f.read_bytes()
+            if i < len(sha) and sha[i] != 'SKIP':
+                if hashlib.sha256(data).hexdigest() != sha[i]:
+                    f.unlink()
+                    raise SystemExit(f'build-packages: {fname} does not match its SHA256SUM (removed; run again)')
+            elif i < len(md5):
+                if hashlib.md5(data).hexdigest() != md5[i]:
+                    f.unlink()
+                    raise SystemExit(f'build-packages: {fname} does not match its MD5SUM (removed; run again)')
+            else:
+                raise SystemExit(f'build-packages: {d.name}: {fname} has no checksum')
+            shutil.copy2(f, d / fname)
+
+    @staticmethod
+    def info(path):
+        """A .info file: shell variable assignments, read without running it."""
+        out = {}
+        for m in re.finditer(r'^([A-Za-z_0-9]+)="((?:[^"\\]|\\.)*)"', path.read_text(), re.M | re.S):
+            out[m.group(1)] = re.sub(r'\\\n', ' ', m.group(2))
+        return out
+
+    # ------------------------------------------------------------ building
+    @staticmethod
+    def fingerprint(*parts):
+        """A hash of everything a package is made from: folders, files and strings."""
+        h = hashlib.sha256()
+        for part in parts:
+            if isinstance(part, Path) and part.is_dir():
+                for f in sorted(part.rglob('*')):
+                    if f.is_file() and not f.name.startswith('.') and not f.name.endswith(('.tar.gz', '.log')):
+                        h.update(str(f.relative_to(part)).encode() + b'\0' + f.read_bytes())
+            elif isinstance(part, Path) and part.is_file():
+                h.update(part.read_bytes())
+            else:
+                h.update(str(part).encode())
+            h.update(b'\1')
+        return h.hexdigest()[:16]
+
+    def files_of(self, name):
+        return [f for f in self.out.glob('*.t?z') if f.name.rsplit('-', 3)[0] == name]
+
+    def install_out(self, name):
+        for f in self.files_of(name):
+            (self.root / 'tmp/avalon-out').mkdir(exist_ok=True)
+            shutil.copy2(f, self.root / 'tmp/avalon-out' / f.name)
+            self.chroot('upgradepkg', '--install-new', '--reinstall', f'/tmp/avalon-out/{f.name}')
+
+    def slackbuild(self, name, src, stack=(), own=False):
+        if name in self.done:
+            return
+        if name in stack:
+            raise SystemExit(f'build-packages: {name} requires itself: {" -> ".join(stack + (name,))}')
+        info = self.info(src / f'{name}.info')
+        if info.get('VERSION') == '@AVALON@':             # Avalon's own: the version in ./VERSION
+            info['VERSION'] = (HERE / 'VERSION').read_text().strip()
+        version = info.get('VERSION', '')
+        reqs = [r for r in (info.get('BUILD_REQUIRES' if own else 'REQUIRES', '')).split() if r != '%README%']
+        for r in reqs:      # Slackware's own (in ROOT), Avalon's own recipe, or Ponce's
+            r = ALIASES.get(r, r)
+            if self.installed(r) or r in self.done:
+                continue
+            mine = own_recipes().get(r)
+            if mine:
+                self.slackbuild(r, HERE / 'packages' / mine, stack=stack + (name,), own=True)
+            elif r in self.ponce_index():
+                self.slackbuild(r, self.ponce_index()[r], stack=stack + (name,))
+            else:
+                raise SystemExit(f'build-packages: {name} requires {r}, which neither Slackware, Avalon nor Ponce has')
+        parts = [src, HERE / 'packages/lib.sh' if own else '', version]
+        if 'avalon-source' in info.get('DOWNLOAD', ''):
+            parts.append(subprocess.run(['git', '-C', str(HERE), 'ls-files', '-s'], capture_output=True,
+                                        text=True).stdout)   # every file of this repository, by content
+        fpr = self.fingerprint(*parts)
+        if self.files_of(name) and self.state.get(name) == fpr:
+            say(f'{name} {version}: unchanged, reused')
+            self.keep.update(f.name for f in self.files_of(name))
+            if not self.installed(name):
+                self.install_out(name)
+            self.done.add(name)
+            return
+        say(f'Building {name} {version} ({"Avalon" if own else "Ponce"}\'s SlackBuild)')
+        d = self.work / name
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.copytree(src, d)
+        shutil.copy2(HERE / 'packages/lib.sh', self.work / 'lib.sh')
+        inf = d / f'{name}.info'
+        inf.write_text(inf.read_text().replace('"@AVALON@"', f'"{version}"'))
+        self.fetch(d, info)
+        if name in PREPARE:
+            self.chroot('sh', '-c', PREPARE[name])
+        out = self.root / 'tmp/avalon-out'
+        out.mkdir(exist_ok=True)
+        for f in out.glob('*.t?z'):
+            if f.name.rsplit('-', 3)[0] == name:
+                f.unlink()
+        before = {f.name for f in out.glob('*.t?z')}
+        log = self.work / f'{name}.log'
+        started = time.time()
+        rc = self.chroot('sh', '-c', f'cd /tmp/avalon-build/{name} && OUTPUT=/tmp/avalon-out TAG=_avalon '
+                                     f'PKGTYPE=txz sh ./{name}.SlackBuild > /tmp/avalon-build/{name}.log 2>&1',
+                         check=False)
+        if rc:
+            print('\n'.join(log.read_text(errors='replace').splitlines()[-40:]))
+            raise SystemExit(f'build-packages: {name} did not build (the whole log: {log})')
+        made = [f for f in out.glob('*.t?z') if f.name not in before]
+        if not made:
+            raise SystemExit(f'build-packages: {name} made no package (log: {log})')
+        for f in made:
+            for old in self.files_of(f.name.rsplit('-', 3)[0]):
+                old.unlink()
+            shutil.copy2(f, self.out / f.name)
+            self.chroot('upgradepkg', '--install-new', '--reinstall', f'/tmp/avalon-out/{f.name}')
+            self.keep.add(f.name)
+            print(f'    made {f.name} ({int(time.time() - started)} s)')
+        self.state[name] = fpr
+        self.statefile.write_text(json.dumps(self.state, indent=2, sort_keys=True))
+        self.done.add(name)
+
+    def tidy(self):
+        """After a full run, packages LIST no longer names go."""
+        for f in self.out.glob('*.t?z'):
+            if f.name not in self.keep:
+                print(f'    removing {f.name}')
+                f.unlink()
+        names = {f.rsplit('-', 3)[0] for f in self.keep}
+        self.state = {n: v for n, v in self.state.items() if n in names}
+        self.statefile.write_text(json.dumps(self.state, indent=2, sort_keys=True))
+
+
+def entries():
+    for line in (HERE / 'packages/LIST').read_text().splitlines():
+        line = line.split('#', 1)[0].split()
+        if len(line) >= 2:
+            yield line[0], line[1]
+
+
+def own_recipes():
+    return {n: src.partition(':')[2] for n, src in entries() if src.startswith('avalon:')}
+
+
+def main(argv):
+    if len(argv) < 2 or argv[0] in ('-h', '--help'):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    if os.geteuid() != 0:
+        raise SystemExit('build-packages: run it with sudo (it builds in a chroot)')
+    b = Builder(argv[0], argv[1])
+    want = set(argv[2:])
+    for name, src in entries():
+        if want and name not in want:
+            continue
+        kind, _, where = src.partition(':')
+        if kind == 'avalon':
+            b.slackbuild(name, HERE / 'packages' / where, own=True)
+        elif kind == 'ponce':
+            b.slackbuild(name, b.ponce / where)
+        else:
+            raise SystemExit(f'build-packages: {name}: unknown source {src}')
+    if not want:
+        b.tidy()
+    say(f'{len(list(b.out.glob("*.t?z")))} packages in {b.out}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

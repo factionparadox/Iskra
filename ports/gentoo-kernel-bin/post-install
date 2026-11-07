@@ -1,4 +1,0 @@
-#!/bin/sh
-for k in /lib/modules/*-gentoo-dist-bin; do depmod -a "${k##*/}"; done
-[ -x /usr/sbin/grub-mkconfig ] && [ -f /boot/grub/grub.cfg ] && grub-mkconfig -o /boot/grub/grub.cfg
-exit 0

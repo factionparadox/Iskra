@@ -1,6 +1,6 @@
-out/
-build/work/
-__pycache__/
 *.pyc
+__pycache__/
 avalon-1-iskra.iso
 avalon-1-iskra.iso.sha256
+build/work/
+out/

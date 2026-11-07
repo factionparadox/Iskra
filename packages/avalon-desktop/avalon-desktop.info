@@ -1,0 +1,7 @@
+PRGNAM="avalon-desktop"
+VERSION="@AVALON@"
+HOMEPAGE="https://github.com/factionparadox/avalon"
+DOWNLOAD="avalon-source"
+SHA256SUM="SKIP"
+REQUIRES="mango quickshell kitty greetd cage fastfetch wlsunset"
+MAINTAINER="Avalon"

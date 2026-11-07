@@ -1,0 +1,8 @@
+PRGNAM="quickshell"
+VERSION="0.3.2"
+HOMEPAGE="https://quickshell.org"
+DOWNLOAD="git+https://git.outfoxxed.me/quickshell/quickshell.git#commit=4f508be500dea6e5732cc3d50382a0048b17e7b1"
+SHA256SUM="SKIP"
+REQUIRES=""
+BUILD_REQUIRES="CLI11"
+MAINTAINER="Avalon"

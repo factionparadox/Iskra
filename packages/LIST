@@ -1,0 +1,40 @@
+# Avalon's packages: everything Avalon adds to Slackware -current, built once on your own machine
+# by build/build-packages (in a clean Slackware -current system, in this order) and put on the
+# stick by build/build-iso. Everything else is Slackware's own.
+#
+# One package a line:  NAME  FROM
+#   avalon:DIR    Avalon's own SlackBuild, in packages/DIR/
+#   ponce:PATH    Ponce's SlackBuild for -current (github.com/Ponce/slackbuilds, branch current, at
+#                 the commit pinned in build/build-packages); what it REQUIRES comes from Slackware
+#                 or is built first from Ponce's tree too
+
+# the Garden System's compositor and shell
+scenefx                 avalon:scenefx          # Mango's blur, shadows and rounded corners
+mango                   avalon:mango            # the compositor: tags and a Niri-style scroller
+CLI11                   ponce:libraries/CLI11   # Quickshell builds with it (headers only)
+quickshell              avalon:quickshell       # the Garden System itself runs in it
+kitty                   avalon:kitty            # kitty's own ready-made build
+
+# logging in: greetd starts the Garden's login screen in cage
+greetd                  ponce:system/greetd
+cage                    avalon:cage
+
+# the desktop's small tools
+wlsunset                ponce:desktop/wlsunset
+grim                    ponce:desktop/grim
+slurp                   ponce:desktop/slurp
+swappy                  ponce:graphics/swappy
+wl-clipboard            ponce:misc/wl-clipboard
+brightnessctl           ponce:system/brightnessctl
+xdg-desktop-portal-wlr  ponce:system/xdg-desktop-portal-wlr
+fastfetch               ponce:system/fastfetch
+
+# Flatpak, for what's only published there (Sober)
+flatpak                 ponce:desktop/flatpak
+
+# Neredy: the local model runtime and voice (upstream's own ready-made builds)
+llama.cpp               avalon:llama.cpp
+piper-tts               avalon:piper-tts
+
+# Avalon itself: the Garden System, Avalon's tools and art (this repository's desktop/)
+avalon-desktop          avalon:avalon-desktop

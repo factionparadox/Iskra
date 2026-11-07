@@ -1,0 +1,16 @@
+#!/bin/bash
+# avalon-desktop.SlackBuild: the Garden System (Quickshell shell and login screen, Mango and kitty
+# settings, artwork) and Avalon's tools, from this repository's desktop/ folder. Run in this
+# folder, as root.
+PRGNAM=avalon-desktop
+. ../lib.sh
+cd $TMP; rm -rf avalon-source; mkdir avalon-source; tar xf $CWD/avalon-source.tar.gz -C avalon-source
+cd avalon-source
+cp -a desktop/. $PKG/
+find $PKG -name __pycache__ -prune -exec rm -rf {} +
+chown -R root:root $PKG
+find $PKG -type d -exec chmod 755 {} +
+chmod 755 $PKG/usr/bin/* $PKG/usr/sbin/* $PKG/etc/grub.d/* $PKG/usr/lib/avalon/* $PKG/etc/rc.d/rc.* 2>/dev/null || true
+chmod 750 $PKG/etc/sudoers.d; chmod 440 $PKG/etc/sudoers.d/*
+install -d $PKG/usr/doc/$PRGNAM-$VERSION; cp -a README.md LICENSE docs $PKG/usr/doc/$PRGNAM-$VERSION/ 2>/dev/null || true
+finish

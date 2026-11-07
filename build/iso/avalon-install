@@ -1,33 +1,44 @@
 #!/bin/bash
-# avalon-install: Avalon's installer. It starts by itself when the stick boots (tty1), in large
-# type, as dialog screens like CRUX's own setup. It asks:
-#   your username · which disk (from a list) · whether to erase it (yes/no) · your password ·
-#   root's password
-# then installs from the stick, with no internet and nothing compiled: CRUX's core, Gentoo's
-# prebuilt kernel (7.3) and current firmware, what the first boot needs, Avalon's ports, fstab,
-# you, and GRUB. Wi-Fi is set up on the first boot, which then
-# builds Avalon on the laptop.
+# avalon-install: Avalon's installer. It starts by itself when the stick boots (the first console,
+# in large type) as dialog screens. It asks: your username, your password, root's password, which
+# disk (from a list), whether to erase it (yes/no). Then, with no internet and nothing compiled:
+#   1. the disk: 1 GiB EFI and Btrfs, with the system in @, your files in @home, logs in @log and
+#      snapshots in @snapshots (going back to a snapshot never touches your files or logs)
+#   2. the system: everything on the stick but its live session, copied across (rsync)
+#   3. your settings: fstab, the name, London time, British English and keyboard, you, the login
+#      screen (greetd with the Garden's), the services, and GRUB with Avalon's boot menu
+# What it ran, with its output, is kept in /var/log/avalon-install.log on the new system.
 #
-# Run it again with  /media/avalon-install  (it skips what's done). To lay the disk out yourself,
-# mount it under /mnt first (the EFI partition at /mnt/boot/efi): it then uses that.
-ROOT=/mnt
-MEDIA=$(cd "$(dirname "$0")" && pwd)
-DEPS=$MEDIA/crux/setup.dependencies
-LOG=/tmp/avalon-install.log
+# To start it again: log in as root on the stick and type  avalon-install
 TITLE="Avalon 1 (Iskra) · installer"
+LOG=/tmp/avalon-install.log
+T=/mnt/avalon-target                # the new system, while installing
+SRC=/mnt/liveslakfs                 # liveslak's view of the system without the live session
+EFI_GIB=1
+MIN_GIB=24
+GiB=$((1024 * 1024 * 1024))
+BTRFS_OPTS=compress=zstd:1,noatime
 
 d() { dialog --backtitle "$TITLE" --colors "$@" 3>&1 1>&2 2>&3; }   # the answer on stdout
-quit() { clear; echo "$*"; echo "Run  /media/avalon-install  to start again."; exit 1; }
+quit() { clear; echo "$*"; echo "To start again:  avalon-install"; exit 1; }
+log() { printf '%s\n' "$*" >> "$LOG"; }
+part() { case $1 in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac; }   # nvme0n1 -> nvme0n1p1
+uuid() { blkid -s UUID -o value "$1"; }
+partuuid() { blkid -s PARTUUID -o value "$1"; }
+inroot() { chroot "$T" /usr/bin/env -i HOME=/root TERM=linux LANG=C PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 
-[ "$(id -u)" = 0 ] || { echo "avalon-install: run it as root"; exit 1; }
-[ -d "$MEDIA/avalon/repo" ] || { echo "avalon-install: this isn't an Avalon stick (no $MEDIA/avalon)"; exit 1; }
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
 setfont latarcyrheb-sun32 2>/dev/null
+: > "$LOG"
+[ -d /sys/firmware/efi ] || quit "This laptop started the stick in legacy BIOS mode. Avalon installs for UEFI only:
+restart, and pick the stick's UEFI entry in the boot menu."
+[ -d "$SRC/usr/share/avalon" ] || quit "This doesn't look like Avalon's stick ($SRC has no Avalon in it)."
 
 d --title " Avalon " --msgbox "\n\
 Pasha keeps the garden.\n\n\
-This puts \Zb\Z6Avalon\Zn on this laptop: CRUX, with the Garden System on top.\n\n\
-Nothing is downloaded or compiled now. The first time Avalon starts, it gets online (you \
-choose your Wi-Fi then) and builds itself on this laptop, which takes a while.\n\n\
+This puts \Zb\Z6Avalon\Zn on this laptop: Slackware, with the Garden System on top.\n\n\
+Five questions, then it copies itself across: no internet needed, nothing compiled, a few \
+minutes. Wi-Fi is set up once you're in the Garden.\n\n\
 \Z3Up/Down\Zn choose · \Z3Tab\Zn moves between buttons · \Z3Enter\Zn confirms · \Z3Esc\Zn backs out" 17 78 \
 	|| quit "Stopped; nothing was touched."
 
@@ -36,16 +47,9 @@ choose your Wi-Fi then) and builds itself on this laptop, which takes a while.\n
 while :; do
 	USER_NAME=$(d --title " You " --inputbox "\nThe username you'll log in with (small letters, no spaces):" 10 64 "${USER_NAME:-}") \
 		|| quit "Stopped; nothing was touched."
-	[[ $USER_NAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && [ "$USER_NAME" != root ] && break
+	[[ $USER_NAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && [[ ! $USER_NAME =~ ^(root|live|greeter)$ ]] && break
 	d --title " You " --msgbox "\n\"$USER_NAME\" won't do: small letters, numbers, - and _, starting with a letter." 9 64
 done
-
-disk_info() {   # "953.9 GB  WD_BLACK SN850X" for a disk name, from /sys
-	local b=/sys/block/$1 sectors model
-	sectors=$(cat "$b/size" 2>/dev/null || echo 0)
-	model=$(cat "$b/device/model" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
-	awk -v s="$sectors" -v m="${model:-disk}" 'BEGIN { printf "%.1f GB  %s", s * 512 / 1e9, m }'
-}
 
 pw() {   # ask twice until both match; the password on stdout
 	local who=$1 a b
@@ -59,232 +63,174 @@ pw() {   # ask twice until both match; the password on stdout
 USER_PW=$(pw "$USER_NAME") || quit "Stopped; nothing was touched."
 ROOT_PW=$(pw "root (the administrator; day to day you use sudo)") || quit "Stopped; nothing was touched."
 
-if ! grep -q " $ROOT " /proc/mounts; then
-	# The disks, read straight from the kernel (/sys/block), without the stick we're running from.
-	# (Intel's VMD can hide NVMe drives until its driver is loaded: load it, and NVMe's, first.)
-	modprobe vmd 2>/dev/null; modprobe nvme 2>/dev/null; sleep 1
-	media_dev=$(awk '$2 == "/media" {print $1; exit}' /proc/mounts)
-	stick=${media_dev##*/}
-	[ -e "/sys/class/block/$stick/partition" ] && stick=$(basename "$(dirname "$(readlink -f "/sys/class/block/$stick")")")
-	menu=()
-	for dev in /sys/block/*; do
-		name=${dev##*/}
-		case $name in loop*|ram*|zram*|sr*|fd*|md*|dm-*|nbd*) continue ;; esac
-		[ "$name" = "$stick" ] && continue
-		[ "$(cat "$dev/size" 2>/dev/null || echo 0)" -gt 0 ] || continue
-		menu+=("$name" "$(disk_info "$name")")
-	done
-	menu+=("other" "type a disk's name myself")
-	DISK=$(d --title " The disk " --menu "\nInstall Avalon on which disk?" 15 74 6 "${menu[@]}") \
-		|| quit "Stopped; nothing was touched."
-	if [ "$DISK" = other ]; then
-		DISK=$(d --title " The disk " --inputbox "\nWhat the kernel sees:\n\n$(ls /sys/block | tr '\n' ' ')\n\nThe stick: ${stick:-not found}\n\nWhich disk (e.g. nvme0n1)?" 16 74) \
-			|| quit "Stopped; nothing was touched."
-		DISK=${DISK#/dev/}
-		[ -b "/dev/$DISK" ] || quit "There's no disk called /dev/$DISK."
-	fi
-	if readlink -f "/sys/block/$DISK" | grep -q '/pci1[0-9a-f]\{4\}:'; then
-		quit "$DISK sits behind Intel VMD (Intel RST). Avalon's kernel starts without an initramfs and
-can't reach a disk there. In the laptop's firmware setup, turn VMD off (storage as plain
-NVMe/AHCI), then start the installer again. Nothing was touched."
-	fi
-	d --title " Erase it? " --defaultno --yesno "\n\Zb\Z1Everything on $DISK will be erased.\Zn\n\n\
-$(disk_info "$DISK")\n\n\
-It gets a 1 GB EFI partition and Avalon on the rest. Go ahead?" 13 64 || quit "Stopped; nothing was touched."
-fi
-
-# --- the work -----------------------------------------------------------------------------
-
-installed() { pkginfo -r $ROOT -i 2>/dev/null | awk -v n="$1" '$1 == n {print $2}'; }
-add() {  # a package by name: Avalon's own copy on the stick first, else CRUX's
-	local name=$1 f e
-	f=$(ls "$MEDIA"/avalon/packages/"$name"#*.pkg.tar.* 2>/dev/null | head -1)
-	[ -n "$f" ] || f=$(ls "$MEDIA"/crux/{core,opt,xorg}/"$name"#*.pkg.tar.* 2>/dev/null | head -1)
-	[ -n "$f" ] || { echo "$name isn't on the stick"; return 1; }
-	e=$(basename "$f"); e=${e%.pkg.tar.*}
-	[ "$(installed "$name")" = "${e#*#}" ] && return 0
-	echo "  $name ${e#*#}"
-	if [ -n "$(installed "$name")" ]; then pkgadd -r $ROOT -u "$f"; else pkgadd -r $ROOT "$f"; fi
+disk_info() {   # "953.9 GB  WD_BLACK SN850X" for a disk name, from /sys
+	local b=/sys/block/$1 sectors model
+	sectors=$(cat "$b/size" 2>/dev/null || echo 0)
+	model=$(cat "$b/device/model" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
+	awk -v s="$sectors" -v m="${model:-disk}" 'BEGIN { printf "%.1f GB  %s", s * 512 / 1e9, m }'
 }
-say() { printf '\n==> %s\n' "$*"; }
-inroot() { chroot $ROOT /usr/bin/env -i HOME=/root TERM=linux PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
+# the disks, straight from the kernel (/sys/block), without the stick we're running from
+stick=$(findmnt -no SOURCE /mnt/livemedia 2>/dev/null)
+stick=${stick##*/}
+[ -n "$stick" ] && [ -e "/sys/class/block/$stick/partition" ] && stick=$(basename "$(dirname "$(readlink -f "/sys/class/block/$stick")")")
+menu=()
+for dev in /sys/block/*; do
+	name=${dev##*/}
+	case $name in loop*|ram*|zram*|sr*|fd*|md*|dm-*|nbd*) continue ;; esac
+	[ "$name" = "$stick" ] && continue
+	[ "$(cat "$dev/size" 2>/dev/null || echo 0)" -ge $(( (EFI_GIB + MIN_GIB) * GiB / 512 )) ] || continue
+	menu+=("$name" "$(disk_info "$name")")
+done
+menu+=("other" "type a disk's name myself")
+DISK=$(d --title " The disk " --menu "\nInstall Avalon on which disk?" 15 74 6 "${menu[@]}") \
+	|| quit "Stopped; nothing was touched."
+if [ "$DISK" = other ]; then
+	DISK=$(d --title " The disk " --inputbox "\nWhat the kernel sees:\n\n$(ls /sys/block | tr '\n' ' ')\n\nThe stick: ${stick:-not found}\n\nWhich disk (e.g. nvme0n1)?" 16 74) \
+		|| quit "Stopped; nothing was touched."
+	DISK=${DISK#/dev/}
+	[ -b "/dev/$DISK" ] || quit "There's no disk called /dev/$DISK."
+fi
+d --title " Erase it? " --defaultno --yes-label "Erase and install" --no-label "Stop" --yesno "\n\
+\Zb\Z1Everything on $DISK will be erased.\Zn\n\n\
+  $(disk_info "$DISK")\n\n\
+  1 GiB EFI, the rest Btrfs (with snapshots)\n\
+  you: $USER_NAME · London time · British English and keyboard\n\n\
+Erase it and install Avalon?" 16 70 || quit "Stopped; nothing was touched."
+DEV=/dev/$DISK
+
+# --- the work ------------------------------------------------------------------------------
 
 steps() {
-	set -e
-	if [ -n "${DISK:-}" ] && ! mountpoint -q $ROOT; then   # (not again, on a retry)
-		say "Erasing $DISK and partitioning it"
-		local disk=/dev/$DISK part
-		case $disk in *[0-9]) part=${disk}p ;; *) part=$disk ;; esac
-		wipefs -qa "$disk"
-		printf 'label: gpt\nsize=1GiB, type=U, name="EFI"\ntype=L, name="Avalon"\n' | sfdisk -q "$disk"
-		partx -u "$disk" 2>/dev/null || blockdev --rereadpt "$disk" 2>/dev/null || true
-		local i=0; while [ ! -b "${part}2" ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-		mkfs.fat -F32 -n EFI "${part}1"
-		# Btrfs, for snapshots: the system in @ (/), your files in @home, logs in @log, and the
-		# snapshots in @snapshots, so going back to one never takes your files or logs with it
-		mkfs.btrfs -q -f -L avalon "${part}2"
-		mount "${part}2" $ROOT
-		for sv in @ @home @log @snapshots; do btrfs subvolume create "$ROOT/$sv" >/dev/null; done
-		umount $ROOT
-		local o=compress=zstd:1,noatime
-		mount -o "subvol=@,$o" "${part}2" $ROOT
-		mkdir -p $ROOT/home $ROOT/var/log $ROOT/.snapshots $ROOT/boot/efi
-		mount -o "subvol=@home,$o" "${part}2" $ROOT/home
-		mount -o "subvol=@log,$o" "${part}2" $ROOT/var/log
-		mount -o "subvol=@snapshots,$o" "${part}2" $ROOT/.snapshots
-		mount "${part}1" $ROOT/boot/efi
-	fi
-	ESP=$(awk -v r="$ROOT" '$2 ~ "^"r"/" && $3 == "vfat" {print $2; exit}' /proc/mounts)
-	[ -n "$ESP" ] || { echo "The EFI partition isn't mounted under $ROOT (e.g. $ROOT/boot/efi)"; return 1; }
+	set -eo pipefail
+	echo "==> 1. The disk: $DEV, 1 GiB EFI and Btrfs"
+	EFI=$(part "$DEV" 1); ROOT=$(part "$DEV" 2)
+	wipefs -a "$DEV"
+	printf 'label: gpt\nsize=%sGiB, type=uefi, name=EFI\ntype=linux, name=Avalon\n' "$EFI_GIB" | sfdisk --wipe always "$DEV"
+	partprobe "$DEV" 2>/dev/null || true; udevadm settle 2>/dev/null || true; sleep 2
+	mkfs.fat -F 32 -n EFI "$EFI"
+	mkfs.btrfs -q -f -L Avalon "$ROOT"
+	mkdir -p "$T"; mount "$ROOT" "$T"
+	for sv in @ @home @log @snapshots; do btrfs subvolume create "$T/$sv" >/dev/null; done
+	umount "$T"
+	mount -o "subvol=@,$BTRFS_OPTS" "$ROOT" "$T"
+	mkdir -p "$T/home" "$T/var/log" "$T/.snapshots" "$T/boot/efi"
+	mount -o "subvol=@home,$BTRFS_OPTS" "$ROOT" "$T/home"
+	mount -o "subvol=@log,$BTRFS_OPTS" "$ROOT" "$T/var/log"
+	mount -o "subvol=@snapshots,$BTRFS_OPTS" "$ROOT" "$T/.snapshots"
+	mount "$EFI" "$T/boot/efi"
 
-	say "CRUX's core"
-	mkdir -p $ROOT/var/lib/pkg && touch $ROOT/var/lib/pkg/db
-	for f in "$MEDIA"/crux/core/*.pkg.tar.*; do
-		n=$(basename "$f"); add "${n%%#*}"
+	echo "==> 2. The system, copied from the stick (about $(du -sh --apparent-size "$SRC" 2>/dev/null | cut -f1))"
+	rsync -aHAX --numeric-ids --info=progress2 --exclude=/lost+found --exclude=/.snapshots \
+		"$SRC/" "$T/" | tr '\r' '\n' | { grep --line-buffered -E '[0-9]+%' || true; } | awk 'NR % 20 == 1 { print "   " $0; fflush() }'
+	sync
+
+	echo "==> 3. Your settings"
+	for x in dev dev/pts proc sys run sys/firmware/efi/efivars; do
+		[ -d "/$x" ] || continue; mkdir -p "$T/$x"; mountpoint -q "$T/$x" || mount --bind "/$x" "$T/$x"
 	done
-
-	say "Gentoo's kernel, firmware, and what the first boot needs (Wi-Fi, menus, GRUB, prt-utils)"
-	add linux-firmware
-	add gentoo-kernel-bin
-	for p in wpa_supplicant dialog grub2-efi prt-utils btrfs-progs; do
-		for dep in $(grep "^$p:" "$DEPS" | cut -d: -f2); do add "$dep"; done
+	# fstab: / gets its subvolume from the kernel (rootflags), so a snapshot can start from GRUB
+	{
+		echo "# /etc/fstab: written by avalon-install"
+		echo "UUID=$(uuid "$ROOT")  /           btrfs  $BTRFS_OPTS                  0 0"
+		echo "UUID=$(uuid "$ROOT")  /home       btrfs  $BTRFS_OPTS,subvol=@home     0 0"
+		echo "UUID=$(uuid "$ROOT")  /var/log    btrfs  $BTRFS_OPTS,subvol=@log      0 0"
+		echo "UUID=$(uuid "$ROOT")  /.snapshots btrfs  $BTRFS_OPTS,subvol=@snapshots 0 0"
+		echo "UUID=$(uuid "$EFI")   /boot/efi   vfat   umask=0077                    0 2"
+		echo "devpts  /dev/pts  devpts  gid=5,mode=620  0 0"
+		echo "proc    /proc     proc    defaults        0 0"
+		echo "tmpfs   /dev/shm  tmpfs   nosuid,nodev    0 0"
+	} > "$T/etc/fstab"
+	cat "$T/etc/fstab"
+	echo "avalon.localdomain" > "$T/etc/HOSTNAME"
+	printf '127.0.0.1 localhost\n127.0.1.1 avalon.localdomain avalon\n::1 localhost\n' > "$T/etc/hosts"
+	ln -sf /usr/share/zoneinfo/Europe/London "$T/etc/localtime"
+	printf '# The hardware clock keeps UTC (avalon-install)\nUTC\n' > "$T/etc/hardwareclock"
+	# British English, a British keyboard on the console (and the large console font)
+	if grep -q '^export LANG=' "$T/etc/profile.d/lang.sh" 2>/dev/null; then
+		sed -i 's|^export LANG=.*|export LANG=en_GB.UTF-8|' "$T/etc/profile.d/lang.sh"
+	else
+		echo 'export LANG=en_GB.UTF-8' >> "$T/etc/profile.d/lang.sh"
+	fi
+	printf '#!/bin/sh\n/usr/bin/loadkeys uk.map\n/usr/bin/setfont latarcyrheb-sun32 2>/dev/null\n' > "$T/etc/rc.d/rc.keymap"
+	chmod 755 "$T/etc/rc.d/rc.keymap"
+	# you (in the groups for sound, video, the network and sudo), root, and greetd's greeter
+	inroot sh -c 'getent group greeter >/dev/null || groupadd -g 381 greeter
+	              getent passwd greeter >/dev/null || useradd -d /var/lib/greeter -u 381 -g greeter -G video -s /bin/false greeter
+	              mkdir -p /var/lib/greeter && chown greeter:greeter /var/lib/greeter'
+	inroot useradd -m -g users -G wheel,audio,video,input,plugdev,power,netdev,lp,cdrom,scanner -s /bin/bash "$USER_NAME"
+	printf '%s:%s\nroot:%s\n' "$USER_NAME" "$USER_PW" "$ROOT_PW" | inroot chpasswd
+	echo "passwords: $USER_NAME and root set (hashed, in /etc/shadow)"
+	[ -d "$T/etc/skel" ] && inroot sh -c "cp -rn /etc/skel/. /home/$USER_NAME/ && chown -R $USER_NAME:users /home/$USER_NAME"
+	printf '# Avalon: the wheel group (you) may use sudo\n%%wheel ALL=(ALL:ALL) ALL\n' > "$T/etc/sudoers.d/wheel"
+	chmod 440 "$T/etc/sudoers.d/wheel"
+	# the Garden's login screen at boot: runlevel 4 runs rc.4.local, which starts greetd
+	sed -i 's/^id:[0-9]:initdefault:/id:4:initdefault:/' "$T/etc/inittab"
+	grep -q '^id:4:initdefault:' "$T/etc/inittab" || { echo "couldn't set runlevel 4 in /etc/inittab"; return 1; }
+	[ -x "$T/etc/rc.d/rc.4.local" ] && [ -x "$T/usr/bin/greetd" ] ||
+		{ echo "greetd or rc.4.local is missing: there'd be no login screen"; return 1; }
+	# the services: NetworkManager (Wi-Fi), Bluetooth, elogind (seats), Avalon's own at boot
+	for s in networkmanager bluetooth elogind messagebus; do
+		[ -f "$T/etc/rc.d/rc.$s" ] && chmod 755 "$T/etc/rc.d/rc.$s"
 	done
-	for k in $ROOT/lib/modules/*-gentoo-dist-bin; do chroot $ROOT depmod -a "${k##*/}"; done
+	[ -f "$T/etc/rc.d/rc.inet1" ] && chmod 644 "$T/etc/rc.d/rc.inet1"   # NetworkManager runs the network
+	grep -q rc.avalon "$T/etc/rc.d/rc.local" 2>/dev/null ||
+		printf '\n# Avalon: its own settings at boot\n[ -x /etc/rc.d/rc.avalon ] && /etc/rc.d/rc.avalon\n' >> "$T/etc/rc.d/rc.local"
 
-	say "The stick's other packages, kept for the first boot (installed instead of compiled, where current)"
-	mkdir -p $ROOT/var/cache/avalon/disc
-	cp "$MEDIA"/crux/opt/*.pkg.tar.* "$MEDIA"/crux/xorg/*.pkg.tar.* $ROOT/var/cache/avalon/disc/
-
-	say "Avalon's ports, and its first boot"
-	rm -rf $ROOT/usr/ports/avalon; mkdir -p $ROOT/usr/ports
-	cp -a "$MEDIA/avalon/repo" $ROOT/usr/ports/avalon
-	install -m 755 "$MEDIA/avalon/repo/build/iso/avalon-firstboot" $ROOT/usr/sbin/avalon-firstboot
-	mkdir -p $ROOT/var/lib/avalon && echo "$USER_NAME" > $ROOT/var/lib/avalon/firstboot
-	# the first boot logs root in on tty1 by itself, once, to run it (put back afterwards)
-	[ -f $ROOT/etc/inittab.avalon ] || cp $ROOT/etc/inittab $ROOT/etc/inittab.avalon
-	grep -q '^c1:.*--autologin root' $ROOT/etc/inittab ||
-		sed -i 's|^\(c1:.*agetty\) \(.*tty1.*\)$|\1 --autologin root \2|' $ROOT/etc/inittab
-	grep '^c1:' $ROOT/etc/inittab
-	grep -q avalon-firstboot $ROOT/root/.bash_profile 2>/dev/null ||
-		echo '[ "$(tty)" = /dev/tty1 ] && [ -f /var/lib/avalon/firstboot ] && /usr/sbin/avalon-firstboot' \
-			>> $ROOT/root/.bash_profile
-	# large type on the console from now on (the screen is 2880 x 1920)
-	sed -i 's|^FONT=.*|FONT=latarcyrheb-sun32|' $ROOT/etc/rc.conf
-	grep -q '^FONT=' $ROOT/etc/rc.conf || echo 'FONT=latarcyrheb-sun32' >> $ROOT/etc/rc.conf
-
-	mkdir -p $ROOT/usr/share/avalon/voices
-	cp "$MEDIA"/avalon/voices/* $ROOT/usr/share/avalon/voices/
-	if [ -f "$MEDIA/avalon/neredy-model.gguf" ]; then
-		say "Neredy's model"
-		cp "$MEDIA/avalon/neredy-model.gguf" $ROOT/var/tmp/
-	fi
-
-	say "/etc/fstab"
-	if ! grep -qE '^[^#]+[[:space:]]/[[:space:]]' $ROOT/etc/fstab; then
-		{
-			echo "# Avalon: written by avalon-install"
-			awk -v r="$ROOT" '$2 == r || $2 ~ "^"r"/" {print $1, $2, $3, $4}' /proc/mounts |
-			while read -r dev mnt fs mopts; do
-				case $dev in /dev/*) ;; *) continue ;; esac
-				where=${mnt#$ROOT}; where=${where:-/}
-				[ "$where" = / ] && pass=1 || pass=2
-				case $fs in
-					vfat)  opts=defaults,umask=0077 ;;
-					btrfs) # / leaves its subvolume to the kernel's rootflags (so a snapshot can be
-					       # started from GRUB); the others name theirs. Btrfs isn't checked at boot
-					       sv=$(echo "$mopts" | tr , '\n' | sed -n 's|^subvol=/\{0,1\}||p')
-					       opts=compress=zstd:1,noatime; pass=0
-					       if [ "$where" != / ] && [ -n "$sv" ]; then opts="$opts,subvol=$sv"; fi ;;
-					*)     opts=defaults,noatime ;;
-				esac
-				echo "UUID=$(blkid -s UUID -o value "$dev")  $where  $fs  $opts  0 $pass"
-			done
-		} >> $ROOT/etc/fstab
-	fi
-	grep -v '^#' $ROOT/etc/fstab | grep -v '^$'
-
-	say "Into the new system"
-	for dir in dev dev/pts proc sys run tmp; do mkdir -p $ROOT/$dir; done
-	mountpoint -q $ROOT/dev || mount --bind /dev $ROOT/dev
-	mountpoint -q $ROOT/dev/pts || mount -t devpts -o noexec,nosuid,gid=tty,mode=0620 devpts $ROOT/dev/pts
-	mountpoint -q $ROOT/proc || mount -t proc proc $ROOT/proc
-	mountpoint -q $ROOT/sys || mount -t sysfs sysfs $ROOT/sys
-	mountpoint -q $ROOT/run || mount --bind /run $ROOT/run
-	mountpoint -q $ROOT/tmp || mount --bind /tmp $ROOT/tmp
-	if [ -d /sys/firmware/efi/efivars ] && ! mountpoint -q $ROOT/sys/firmware/efi/efivars; then
-		mount --bind /sys/firmware/efi/efivars $ROOT/sys/firmware/efi/efivars
-	fi
-
-	say "You and root"
-	grep -q "^$USER_NAME:" $ROOT/etc/passwd || inroot useradd -m -s /bin/bash "$USER_NAME"
-	# (CRUX's shadow leaves chpasswd out: openssl makes the hash, usermod sets it)
-	setpw() {   # setpw PASSWORD USER: a failure here stops the install, rather than leaving no password
-		local hash
-		hash=$(printf '%s\n' "$1" | inroot openssl passwd -6 -stdin)
-		[ -n "$hash" ] || { echo "couldn't make a password hash for $2"; return 1; }
-		inroot usermod -p "$hash" "$2"
-	}
-	setpw "$USER_PW" "$USER_NAME"
-	setpw "$ROOT_PW" root
-	inroot sh /usr/ports/avalon/avalon-setup --offline "$USER_NAME"
-
-	say "GRUB (UEFI), on ${ESP#$ROOT}, with the Garden's boot screen"
-	mkdir -p $ROOT/etc/default $ROOT/boot/grub/themes
-	cat > $ROOT/etc/default/grub <<'EOF'
-GRUB_DISTRIBUTOR="Avalon"
-GRUB_TIMEOUT=3
-GRUB_CMDLINE_LINUX_DEFAULT="quiet"
-# no initramfs: the kernel finds its root by partition UUID, which it understands by itself
-GRUB_DISABLE_LINUX_UUID=true
-GRUB_DISABLE_LINUX_PARTUUID=false
-GRUB_DISABLE_RECOVERY=true
-# the Garden System's boot screen
-GRUB_THEME=/boot/grub/themes/avalon/theme.txt
-GRUB_GFXMODE=auto
-GRUB_TERMINAL_OUTPUT=gfxterm
-EOF
-	if [ "$(findmnt -no FSTYPE $ROOT)" = btrfs ] && [ "$(findmnt -no FSROOT $ROOT)" = /@ ]; then
-		# the normal entry always starts the system's own subvolume (snapshots get entries of their own)
-		echo 'GRUB_CMDLINE_LINUX="rootfstype=btrfs rootflags=subvol=@ rootwait"' >> $ROOT/etc/default/grub
-	fi
-	rm -rf $ROOT/boot/grub/themes/avalon
-	cp -r "$MEDIA/avalon/repo/desktop/usr/share/avalon/grub-theme" $ROOT/boot/grub/themes/avalon
-	inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --bootloader-id=Avalon
-	inroot grub-install --target=x86_64-efi --efi-directory="${ESP#$ROOT}" --removable
+	# GRUB, with Avalon's boot menu. Slackware's kernel has NVMe and Btrfs built in, so there's no
+	# initrd: the root is named by its PARTUUID and its subvolume by rootflags.
+	local g=$T/etc/default/grub
+	set_grub() { if grep -q "^#\?$1=" "$g"; then sed -i "s|^#\?$1=.*|$1=$2|" "$g"; else echo "$1=$2" >> "$g"; fi; }
+	set_grub GRUB_CMDLINE_LINUX_DEFAULT '"quiet"'
+	set_grub GRUB_CMDLINE_LINUX '"rootfstype=btrfs rootflags=subvol=@ rootwait"'
+	set_grub GRUB_DISABLE_LINUX_UUID true
+	set_grub GRUB_DISABLE_LINUX_PARTUUID false
+	set_grub GRUB_DISTRIBUTOR Avalon
+	set_grub GRUB_TIMEOUT 5
+	set_grub GRUB_GFXMODE auto
+	set_grub GRUB_TERMINAL_OUTPUT gfxterm
+	set_grub GRUB_THEME /boot/grub/themes/avalon/theme.txt
+	mkdir -p "$T/boot/grub/themes"
+	rm -rf "$T/boot/grub/themes/avalon"; cp -a "$T/usr/share/avalon/grub-theme" "$T/boot/grub/themes/avalon"
+	inroot grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Avalon --recheck
+	inroot grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable
 	inroot grub-mkconfig -o /boot/grub/grub.cfg
-	say "Installed"
+	grep -q "root=PARTUUID=$(partuuid "$ROOT")" "$T/boot/grub/grub.cfg" ||
+		{ echo "GRUB's menu doesn't name the root by PARTUUID: the laptop wouldn't find it"; return 1; }
+	grep -q "rootflags=subvol=@" "$T/boot/grub/grub.cfg" ||
+		{ echo "GRUB's menu doesn't give the root's subvolume"; return 1; }
+	# a first snapshot: Avalon exactly as installed ("Avalon as it was" in the boot menu)
+	inroot /usr/sbin/avalon-snapshot take "as installed" || echo "(no first snapshot; carrying on)"
+	cp "$LOG" "$T/var/log/avalon-install.log" 2>/dev/null || true
+	echo "==> Done"
 }
 
-unmount_all() {
-	for dir in sys/firmware/efi/efivars tmp run sys proc dev/pts dev; do umount $ROOT/$dir 2>/dev/null; done
+cleanup() {
+	sync
+	for x in sys/firmware/efi/efivars run sys proc dev/pts dev boot/efi .snapshots var/log home; do umount -l "$T/$x" 2>/dev/null; done
+	umount -l "$T" 2>/dev/null
+	true
 }
 
 while :; do
-	rows=$(( $(tput lines 2>/dev/null || echo 40) - 6 )); cols=$(( $(tput cols 2>/dev/null || echo 120) - 6 ))
-	{ ( steps ); echo $? > /tmp/avalon-install.rc; } 2>&1 | tee "$LOG" |
-		dialog --backtitle "$TITLE" --title " Installing " --progressbox $rows $cols
-	unmount_all
-	[ "$(cat /tmp/avalon-install.rc)" = 0 ] && break
-	choice=$(d --title " Something went wrong " --no-cancel --menu "\n\Z1The install stopped.\Zn The last lines:\n\n$(tail -6 "$LOG" | cut -c1-70)\n" 22 78 4 \
-		again "Try again (it carries on from where it stopped)" \
-		log   "Read the whole log ($LOG)" \
-		shell "A shell (type exit to come back here)" \
-		stop  "Stop") || choice=stop
+	rc=/tmp/avalon-install.rc
+	( steps; echo $? > $rc ) 2>&1 | tee -a "$LOG" | dialog --backtitle "$TITLE" --title " Installing Avalon " --progressbox 30 110
+	[ "$(cat $rc 2>/dev/null)" = 0 ] && break
+	cleanup
+	choice=$(d --title " It stopped " --menu "\n\Z1Installing stopped.\Zn The last lines:\n\n$(tail -6 "$LOG" | cut -c1-100)\n" 22 110 3 \
+		again "start again from the disk step" log "read the whole log" shell "a shell (type exit to come back)") ||
+		quit "Stopped. The log: $LOG"
 	case $choice in
-		log)   dialog --backtitle "$TITLE" --title " $LOG " --textbox "$LOG" $rows $cols ;;
-		shell) clear; echo "The log is $LOG. Type exit to come back."; bash -l ;;
-		stop)  quit "Stopped. The log is $LOG." ;;
+		log) dialog --backtitle "$TITLE" --textbox "$LOG" 40 120 ;;
+		shell) clear; echo "The log: $LOG.  Type exit to come back."; bash ;;
 	esac
 done
-
-sync
-if d --title " Installed " --yes-label "Restart" --no-label "Not yet" --yesno "\n\
-\Zb\Z2Avalon is installed.\Zn\n\n\
-Take the USB stick out, then restart.\n\n\
-On its first start, Avalon asks for your Wi-Fi and builds itself (you can watch), then \
-restarts into the Garden System, where you log in as \Zb$USER_NAME\Zn." 14 72; then
-	umount -R $ROOT 2>/dev/null
+cleanup
+USER_PW=; ROOT_PW=
+if d --title " Avalon is installed " --yes-label "Restart now" --no-label "Not yet" --yesno "\n\
+\Z2Avalon is on the disk.\Zn\n\n\
+Take the USB stick out when the screen goes dark. Avalon starts at the Garden's login screen:\n\
+log in as $USER_NAME.\n\n\
+In the Garden: Super+; is Command Mode (\"wifi\" connects to Wi-Fi), Super+/ shows the keys." 16 76; then
 	reboot
 fi
 clear
-echo "Installed. Type  reboot  when you're ready (take the stick out first)."

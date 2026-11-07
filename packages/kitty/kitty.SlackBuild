@@ -1,0 +1,21 @@
+#!/bin/bash
+# kitty.SlackBuild: kitty, the GPU-drawn terminal, from the kitty project's own ready-made build
+# (self-contained, nothing compiled), kept in /opt/kitty. Run in this folder, as root.
+PRGNAM=kitty
+. ../lib.sh
+install -d $PKG/opt/kitty $PKG/usr/bin
+tar xJf $CWD/kitty-$VERSION-x86_64.txz -C $PKG/opt/kitty
+ln -s /opt/kitty/bin/kitty $PKG/usr/bin/kitty
+ln -s /opt/kitty/bin/kitten $PKG/usr/bin/kitten
+# its menu entries, icons and manuals where the system looks for them
+install -d $PKG/usr/share/applications $PKG/usr/share/icons $PKG/usr/man
+for d in $PKG/opt/kitty/share/applications/*.desktop; do
+  sed -e 's|^Icon=.*|Icon=kitty|' "$d" > $PKG/usr/share/applications/$(basename "$d")
+done
+cp -a $PKG/opt/kitty/share/icons/hicolor $PKG/usr/share/icons/
+cp -a $PKG/opt/kitty/share/man/* $PKG/usr/man/
+rm -rf $PKG/opt/kitty/share/man
+install -d $PKG/usr/doc/$PRGNAM-$VERSION
+ln -s /opt/kitty/share/doc/kitty/html $PKG/usr/doc/$PRGNAM-$VERSION/html
+chown -R root:root $PKG
+finish

@@ -1,8 +1,0 @@
-# /etc/greetd/config.toml: Avalon logs in with the Garden System's own login screen
-# (Quickshell, in cage), which then starts your Mango session.
-[terminal]
-vt = 7
-
-[default_session]
-command = "cage -s -- quickshell -p /usr/share/garden/greeter.qml"
-user = "greeter"

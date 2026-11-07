@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# build-iso: Avalon's install stick, made on your own machine (Arch on WSL is fine).
+#
+#   sudo build/build-iso                 makes out/avalon-VERSION-x86_64.iso
+#
+# 1. build/slackware-root makes a Slackware -current system in a folder, from Slackware's own
+#    ready-made packages (kept in ~/.cache/avalon/slackware for next time; every one checked
+#    against Slackware's signed list).
+# 2. build/build-packages builds Avalon's own packages (packages/LIST: Mango, Quickshell, greetd and
+#    the rest Slackware lacks) inside it, once; later runs reuse what hasn't changed. If anything
+#    won't build, it stops here, before any stick exists.
+# 3. liveslak (AlienBOB's Slackware Live builder, at a pinned commit) makes the stick: Slackware's
+#    series a ap d l n x xap and Avalon's packages, Avalon's boot menu, and a live session whose
+#    only job is the installer, which starts by itself.
+#
+# Settings (environment):
+#   AVALON_WORK    where the work happens (default: build/work/iso; needs about 25 GB)
+#   SLACK_CACHE    Slackware's packages, kept between builds (default ~/.cache/avalon/slackware)
+#   SLACK_MIRROR   a Slackware mirror's slackware64-current folder
+set -Eeuo pipefail
+trap 'echo "build-iso: stopped at line $LINENO (exit $?)" >&2' ERR
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+VERSION=$(cat "$HERE/VERSION")
+WORK=${AVALON_WORK:-$HERE/build/work/iso}
+ROOT=$WORK/root
+OUT=$HERE/out
+USERHOME=$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)
+CACHE=${SLACK_CACHE:-$USERHOME/.cache/avalon/slackware}
+MIRROR=${SLACK_MIRROR:-https://slackware.uk/slackware/slackware64-current}
+SERIES="a ap d l n x xap"
+LIVESLAK=https://git.liveslak.org/liveslak
+LIVESLAK_COMMIT=9c54b0835b825b41e40a4853f3b3b30694aea35f
+say() { printf '\n==> %s\n' "$*"; }
+die() { printf '\nbuild-iso: %s\n' "$*" >&2; exit 2; }
+[[ $EUID -eq 0 ]] || die "run it with sudo (it builds a system in a folder, as root)"
+for t in curl gpg git chroot mount rsync python3; do command -v $t >/dev/null || die "$t is needed"; done
+mkdir -p "$WORK" "$OUT"
+
+run() {   # a command inside ROOT, as root
+  chroot "$ROOT" env -i HOME=/root TERM="${TERM:-dumb}" LANG=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    ${https_proxy:+https_proxy=$https_proxy} ${http_proxy:+http_proxy=$http_proxy} "$@"
+}
+unmount_all() {
+  for d in tmp/slackrepo/slackware64-current dev/pts dev sys proc; do
+    mountpoint -q "$ROOT/$d" 2>/dev/null && umount -l "$ROOT/$d"
+  done
+  true
+}
+trap unmount_all EXIT
+
+say "1. A Slackware -current system to build in (series: $SERIES)"
+SLACK_CACHE=$CACHE SLACK_MIRROR=$MIRROR "$HERE/build/slackware-root" "$ROOT" $SERIES
+for d in proc sys dev dev/pts; do mkdir -p "$ROOT/$d"; mountpoint -q "$ROOT/$d" || mount --bind "/$d" "$ROOT/$d"; done
+cp -L /etc/resolv.conf "$ROOT/etc/resolv.conf"
+
+say "Each series' tagfile (which packages liveslak puts on the stick), checked against Slackware's signed list"
+for s in $SERIES; do
+  f=slackware64/$s/tagfile
+  sum=$(awk -v f="./$f" '$2 == f { print $1 }' "$CACHE/CHECKSUMS.md5")
+  [[ -n $sum ]] || die "no tagfile for series $s in Slackware's list"
+  [[ -f $CACHE/$f ]] && echo "$sum  $CACHE/$f" | md5sum -c --status ||
+    curl -fsSL --retry 3 -o "$CACHE/$f" "$MIRROR/$f"
+  echo "$sum  $CACHE/$f" | md5sum -c --status || die "$f does not match Slackware's signed checksum"
+done
+
+say "2. Avalon's own packages (packages/LIST), built in it"
+PKGS=$OUT/packages
+python3 "$HERE/build/build-packages" "$ROOT" "$PKGS"
+
+say "3. liveslak, at commit ${LIVESLAK_COMMIT:0:12}"
+if [[ ! -d $WORK/liveslak/.git ]]; then git clone -q "$LIVESLAK" "$WORK/liveslak"; fi
+git -C "$WORK/liveslak" fetch -q origin
+git -C "$WORK/liveslak" -c advice.detachedHead=false checkout -q "$LIVESLAK_COMMIT"
+LS=$ROOT/tmp/liveslak
+rsync -a --delete --exclude=.git "$WORK/liveslak/" "$LS/"
+# Avalon's packages as liveslak's local module "avalon"
+mkdir -p "$LS/local64/avalon"
+cp "$PKGS"/*.txz "$LS/local64/avalon/"
+# Avalon's settings and live session (build/iso/make_slackware_live.conf), and its installer
+cp "$HERE/build/iso/make_slackware_live.conf" "$LS/make_slackware_live.conf"
+install -m755 "$HERE/build/iso/avalon-install" "$LS/avalon-install"
+# the boot menu: Avalon's theme in place of liveslak's, its fonts loaded, Avalon's name on the entries
+THEME=$HERE/desktop/usr/share/avalon/grub-theme
+[[ -f $THEME/theme.txt ]] || die "no GRUB theme at $THEME"
+rm -rf "$LS/EFI/BOOT/liveslak"; cp -a "$THEME" "$LS/EFI/BOOT/liveslak"
+sed -i -e 's|^  set gfxmode=.*|  set gfxmode=auto\n  loadfont $cmdpath/liveslak/menu.pf2\n  loadfont $cmdpath/liveslak/hint.pf2|' \
+       -e 's|^menuentry "Start @CDISTRO@@DIRSUFFIX@ @SL_VERSION@ @LIVEDE@ liveslak-@VERSION@ (\$sl_lang)"|menuentry "Install Avalon '"$VERSION"' (Iskra)"|' \
+       "$LS/grub.tpl"
+grep -q 'menu.pf2' "$LS/grub.tpl" && grep -q 'Install Avalon' "$LS/grub.tpl" || die "liveslak's boot menu has changed; build/build-iso needs updating"
+
+say "Slackware's own documents, which liveslak puts on the stick (checked against Slackware's signed list)"
+awk '$2 ~ /^\.\/(ANNOUNCE|CHANGES_AND_HINTS|COPY|CRYPTO|README|RELEASE_NOTES|SPEAK|[^\/]*HOWTO|UPGRADE)[^\/]*$/ ||
+     $2 ~ /^\.\/usb-and-pxe-installers\/README[^\/]*$/ { sub("^\\./", "", $2); print $1, $2 }' "$CACHE/CHECKSUMS.md5" |
+while read -r sum f; do
+  mkdir -p "$CACHE/$(dirname "$f")"
+  if ! { [[ -f $CACHE/$f ]] && echo "$sum  $CACHE/$f" | md5sum -c --status; }; then
+    curl -fsSL --retry 3 -o "$CACHE/$f" "$MIRROR/$f"
+    echo "$sum  $CACHE/$f" | md5sum -c --status || die "$f does not match Slackware's signed checksum"
+  fi
+done
+
+say "The stick (liveslak's make_slackware_live.sh, in the Slackware system)"
+mkdir -p "$ROOT/tmp/slackrepo/slackware64-current"
+mountpoint -q "$ROOT/tmp/slackrepo/slackware64-current" || mount --bind "$CACHE" "$ROOT/tmp/slackrepo/slackware64-current"
+iso=avalon-$VERSION-x86_64.iso
+rm -f "$ROOT/tmp/$iso"
+run sh -c "cd /tmp/liveslak && ./make_slackware_live.sh -d AVALON -l gb -R 3 -H avalon -X -t doc \
+             -s /tmp/slackrepo -O /tmp/$iso" 2>&1 | tee "$WORK/liveslak.log"
+[[ -s $ROOT/tmp/$iso ]] || die "liveslak made no ISO (its log: $WORK/liveslak.log)"
+umount -l "$ROOT/tmp/slackrepo/slackware64-current"
+mv "$ROOT/tmp/$iso" "$OUT/$iso"
+( cd "$OUT" && sha256sum "$iso" > "$iso.sha256" )
+[[ -n ${SUDO_USER:-} ]] && chown "$SUDO_USER:" "$OUT/$iso" "$OUT/$iso.sha256"
+say "Done: $OUT/$iso ($(du -h "$OUT/$iso" | cut -f1))"
+echo "    Write it to a USB stick (Rufus in DD mode, or Fedora Media Writer), turn Secure Boot off,"
+echo "    and start the laptop from it. The installer starts by itself."

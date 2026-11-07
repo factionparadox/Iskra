@@ -1,0 +1,12 @@
+#!/bin/bash
+# piper-tts.SlackBuild: Avalon's SlackBuild for piper-tts. Run in this folder, as root.
+PRGNAM=piper-tts
+. ../lib.sh
+cd $TMP; rm -rf piper; tar xf $CWD/piper_linux_x86_64.tar.gz
+install -d $PKG/usr/lib/avalon $PKG/usr/bin
+cp -a piper $PKG/usr/lib/avalon/piper
+chown -R root:root $PKG/usr/lib/avalon/piper
+ln -s ../lib/avalon/piper/piper $PKG/usr/bin/piper
+# Piper's own build: its libraries are left exactly as Piper made them (not stripped)
+cd $PKG; slackdesc
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-$ARCH-$BUILD$TAG.$PKGTYPE"

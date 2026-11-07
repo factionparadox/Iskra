@@ -1,0 +1,9 @@
+#!/bin/sh
+# /etc/rc.d/rc.avalon: Avalon's own settings at boot (run from rc.local)
+# the battery charge limit Avalon Control set, if any (stops charging at that percentage)
+if [ -r /etc/avalon/charge-limit ]; then
+  n=$(cat /etc/avalon/charge-limit)
+  for b in /sys/class/power_supply/BAT*/charge_control_end_threshold; do
+    [ -w "$b" ] && echo "$n" > "$b"
+  done
+fi

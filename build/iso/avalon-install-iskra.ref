@@ -1,0 +1,228 @@
+#!/bin/bash
+# iskra-install: put Iskra on this laptop's disk, from the live stick.     sudo iskra-install
+#
+# Five questions (the disk, a computer name, your username and password, the timezone, whether
+# to log in automatically), then one Yes/No, then by itself:
+#   1. GPT on the whole disk: 1 GiB EFI, swap the size of the RAM (for hibernation), XFS.
+#   2. The system: everything on the stick except its live session, copied across (rsync).
+#      Nothing to download and nothing to compile: a few minutes.
+#   3. Your settings: fstab, the computer's name, the timezone, British English and keyboard,
+#      your user and password, ly (the login screen), and GRUB with Pasha's boot menu.
+# What it runs, with its output, shows as it happens and is kept in /var/log/iskra-install.log on
+# the new system.
+set -uo pipefail
+TITLE="Искра / Iskra installer"
+LOG=/tmp/iskra-install.log
+T=/mnt/iskra-target                 # the new system, while installing
+SRC=/mnt/liveslakfs                 # liveslak's view of the system without the live session
+EFI_GIB=1
+MIN_ROOT_GIB=24
+GiB=$((1024 * 1024 * 1024))
+
+say() { printf '%s\n' "$*" | tee -a "$LOG"; }
+run() { printf '+ %s\n' "$*" >> "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
+in_target() { run chroot "$T" /usr/bin/env -i HOME=/root TERM=linux PATH=/usr/sbin:/usr/bin:/sbin:/bin /bin/sh -c "$*"; }
+stage() { say ""; say "==> $1. $2"; }
+dlg() { dialog --backtitle "$TITLE" --title "Iskra" "$@" 3>&1 1>&2 2>&3; }
+notice() { dlg --msgbox "$1" 14 76; }
+fail() {
+	say ""; say "iskra-install: $1"
+	dlg --msgbox "Something went wrong: $1
+
+What happened is in $LOG (less $LOG). Nothing has been written to the disk's boot
+menu yet unless step 3 had started; restart and run sudo iskra-install to try again." 13 76
+	exit 1
+}
+part() { case $1 in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac; }   # nvme0n1 -> nvme0n1p1
+uuid() { blkid -s UUID -o value "$1"; }
+partuuid() { blkid -s PARTUUID -o value "$1"; }
+
+# ---------------------------------------------------------------- questions
+choose_disk() {
+	local items=() name size model stick
+	# the stick this is running from is never offered
+	stick=$(lsblk -no PKNAME "$(findmnt -no SOURCE /mnt/livemedia 2>/dev/null)" 2>/dev/null)
+	while read -r name size model; do
+		[ "$name" = "$stick" ] && continue
+		[ "$size" -ge $(((EFI_GIB + MIN_ROOT_GIB) * GiB)) ] || continue
+		lsblk -nro MOUNTPOINT "/dev/$name" | grep -q . && continue
+		items+=("/dev/$name" "$((size / GiB)) GiB  ${model:-disk}")
+	done < <(lsblk -dnbo NAME,SIZE,MODEL -e 7,11 | grep -v '^zram')
+	[ ${#items[@]} -gt 0 ] || { notice "No unmounted disk of at least $((EFI_GIB + MIN_ROOT_GIB)) GiB was found."; exit 2; }
+	DISK=$(dlg --menu "Install Iskra on which disk?" 15 70 6 "${items[@]}") || exit 1
+}
+ask() {
+	notice "Искра / Iskra $(cat /usr/share/iskra/version 2>/dev/null | awk '{print $NF}')
+
+Slackware -current with ratpoison and Plan 9's tools, for the Framework Laptop 13 Pro.
+
+Five questions, then one Yes/No. Choosing Yes erases the whole disk you pick. The rest
+needs no internet and takes a few minutes."
+	choose_disk
+	HOST=$(dlg --inputbox "Computer name:" 9 60 iskra) || exit 1
+	[[ $HOST =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,62}$ ]] || { notice "Use letters, digits and hyphens for the computer name."; exit 2; }
+	USERNAME=$(dlg --inputbox "Your username (lower case):" 9 60) || exit 1
+	[[ $USERNAME =~ ^[a-z_][a-z0-9_-]{0,30}$ && $USERNAME != root && $USERNAME != live ]] ||
+		{ notice "Use lower-case letters, digits, _ or - for the username (not root or live)."; exit 2; }
+	PASS=$(dlg --insecure --passwordbox "Password (also the root password, for recovery):" 9 60) || exit 1
+	PASS2=$(dlg --insecure --passwordbox "The same password again:" 9 60) || exit 1
+	[ -n "$PASS" ] && [ "$PASS" = "$PASS2" ] || { notice "The passwords were empty or different. Nothing has been changed."; exit 2; }
+	TZONE=$(dlg --default-item Europe/London --menu "Timezone:" 15 60 6 \
+		Europe/London "United Kingdom" Europe/Moscow Moscow Europe/Dublin Ireland \
+		Europe/Berlin "Central Europe" America/New_York "Eastern United States" UTC UTC) || exit 1
+	if dlg --yes-label "Log in automatically" --no-label "Ask for my password" --yesno \
+		"Start straight into the desktop when the laptop boots?
+
+The screen still locks with your password when the lid closes or it sleeps." 10 76; then
+		AUTOLOGIN=yes; else AUTOLOGIN=no; fi
+	DISK_BYTES=$(lsblk -dnbo SIZE "$DISK")
+	RAM_GIB=$(( ( $(awk '/MemTotal/ {print $2}' /proc/meminfo) * 1024 + GiB - 1) / GiB ))
+	SWAP_GIB=$RAM_GIB
+	ROOT_GIB=$(( DISK_BYTES / GiB - EFI_GIB - SWAP_GIB ))
+	if [ $ROOT_GIB -lt $MIN_ROOT_GIB ]; then SWAP_GIB=0; ROOT_GIB=$(( DISK_BYTES / GiB - EFI_GIB )); fi
+	dlg --defaultno --yes-label "Erase and install" --no-label Cancel --yesno \
+"Erase EVERYTHING on this disk?
+
+  $DISK  $(lsblk -dno MODEL "$DISK")  $((DISK_BYTES / GiB)) GiB
+
+  $EFI_GIB GiB EFI   $SWAP_GIB GiB swap (hibernation)   $ROOT_GIB GiB XFS
+  computer: $HOST   user: $USERNAME   $TZONE
+  $( [ $AUTOLOGIN = yes ] && echo 'automatic login' || echo 'password at login')" 15 78 ||
+		{ notice "Cancelled. Nothing has been changed."; exit 1; }
+}
+
+# ---------------------------------------------------------------- 1. disk
+disk() {
+	stage 1 "Partitioning $DISK: $EFI_GIB GiB EFI, $SWAP_GIB GiB swap, $ROOT_GIB GiB XFS"
+	EFI=$(part "$DISK" 1)
+	if [ $SWAP_GIB -gt 0 ]; then SWAP=$(part "$DISK" 2); ROOT=$(part "$DISK" 3); else SWAP=; ROOT=$(part "$DISK" 2); fi
+	run wipefs -a "$DISK" || fail "wipefs $DISK"
+	{
+		echo "label: gpt"
+		echo "size=${EFI_GIB}GiB, type=uefi, name=EFI"
+		[ -n "$SWAP" ] && echo "size=${SWAP_GIB}GiB, type=swap, name=swap"
+		echo "type=linux, name=Iskra"
+	} | run sfdisk --wipe always "$DISK" || fail "sfdisk $DISK"
+	run partprobe "$DISK"; udevadm settle 2>/dev/null; sleep 2
+	run mkfs.fat -F 32 -n EFI "$EFI" || fail "mkfs.fat $EFI"
+	run mkfs.xfs -f -L Iskra "$ROOT" || fail "mkfs.xfs $ROOT"
+	if [ -n "$SWAP" ]; then run mkswap -L swap "$SWAP" || fail "mkswap"; fi
+	mkdir -p "$T"
+	run mount "$ROOT" "$T" || fail "mount $ROOT"
+	mkdir -p "$T/boot/efi"
+	run mount "$EFI" "$T/boot/efi" || fail "mount $EFI"
+}
+
+# ---------------------------------------------------------------- 2. the system
+copy() {
+	stage 2 "Copying Iskra to the disk (about $(du -sh --apparent-size "$SRC" 2>/dev/null | cut -f1))"
+	run rsync -aHAX --numeric-ids --info=progress2 --exclude=/lost+found "$SRC/" "$T/" || fail "copying the system"
+	sync
+}
+
+# ---------------------------------------------------------------- 3. settings and boot
+mount_pseudo() {
+	for d in dev dev/pts proc sys run sys/firmware/efi/efivars; do
+		[ -d "/$d" ] || continue
+		mkdir -p "$T/$d"
+		mountpoint -q "$T/$d" || mount --bind "/$d" "$T/$d"
+	done
+}
+settings() {
+	stage 3 "Your settings: fstab, name, timezone, language, user, ly, GRUB"
+	mount_pseudo
+	{
+		echo "# /etc/fstab: written by iskra-install"
+		echo "UUID=$(uuid "$ROOT")  /          xfs     defaults,noatime  1 1"
+		echo "UUID=$(uuid "$EFI")   /boot/efi  vfat    umask=0077        1 2"
+		[ -n "$SWAP" ] && echo "UUID=$(uuid "$SWAP")  swap       swap    defaults          0 0"
+		echo "devpts      /dev/pts   devpts  gid=5,mode=620    0 0"
+		echo "proc        /proc      proc    defaults          0 0"
+		echo "tmpfs       /dev/shm   tmpfs   nosuid,nodev      0 0"
+	} > "$T/etc/fstab"
+	tee -a "$LOG" < "$T/etc/fstab"
+	echo "$HOST.localdomain" > "$T/etc/HOSTNAME"
+	printf '127.0.0.1 localhost\n127.0.1.1 %s.localdomain %s\n::1 localhost\n' "$HOST" "$HOST" > "$T/etc/hosts"
+	ln -sf "/usr/share/zoneinfo/$TZONE" "$T/etc/localtime"
+	printf '# The hardware clock keeps UTC (iskra-install)\nUTC\n' > "$T/etc/hardwareclock"
+	# British English, a British keyboard on the console and in X
+	sed -i 's|^export LANG=.*|export LANG=en_GB.UTF-8|' "$T/etc/profile.d/lang.sh" 2>/dev/null
+	grep -q '^export LANG=' "$T/etc/profile.d/lang.sh" 2>/dev/null || echo 'export LANG=en_GB.UTF-8' >> "$T/etc/profile.d/lang.sh"
+	printf '#!/bin/sh\n/usr/bin/loadkeys uk.map\n' > "$T/etc/rc.d/rc.keymap"; chmod 755 "$T/etc/rc.d/rc.keymap"
+	mkdir -p "$T/etc/X11/xorg.conf.d"
+	[ -f "$T/etc/X11/xorg.conf.d/30-iskra.conf" ] || \
+		printf 'Section "InputClass"\n  Identifier "keyboard"\n  MatchIsKeyboard "on"\n  Option "XkbLayout" "gb,ru"\n  Option "XkbOptions" "grp:win_space_toggle"\nEndSection\n' \
+		> "$T/etc/X11/xorg.conf.d/00-keyboard.conf"
+	# you, in the groups that let you use sound, video, the network and sudo
+	in_target "useradd -m -g users -G wheel,audio,video,input,plugdev,power,netdev,lp,cdrom,scanner -s /bin/bash $USERNAME" || fail "useradd"
+	printf 'root:%s\n%s:%s\n' "$PASS" "$USERNAME" "$PASS" | chroot "$T" /usr/sbin/chpasswd || fail "chpasswd"
+	PASS=; PASS2=
+	say "passwords: root and $USERNAME set (hashed, in /etc/shadow)"
+	in_target "cp -rn /usr/share/iskra/skel/. /home/$USERNAME/ && chown -R $USERNAME:users /home/$USERNAME"
+	# ly: on the first console (iskra-desktop puts it there), Iskra's look, your choice of login
+	local ly=$T/etc/ly/config.ini
+	if [ -f "$ly" ]; then
+		set_ly() { if grep -q "^$1 *=" "$ly"; then sed -i "s|^$1 *=.*|$1 = $2|" "$ly"; else echo "$1 = $2" >> "$ly"; fi; }
+		set_ly tty 1
+		if [ "$AUTOLOGIN" = yes ]; then set_ly auto_login_user "$USERNAME"; set_ly auto_login_session iskra
+		else sed -i '/^auto_login_/d' "$ly"; fi
+	fi
+	# GRUB, with Pasha's boot menu. Slackware's kernel has NVMe and XFS built in, so it needs no
+	# initrd: GRUB names the root partition by its PARTUUID, and loads the Intel microcode itself.
+	local cmdline="quiet"
+	[ -n "$SWAP" ] && cmdline="$cmdline resume=PARTUUID=$(partuuid "$SWAP")"
+	local g=$T/etc/default/grub
+	set_grub() { if grep -q "^#\?$1=" "$g"; then sed -i "s|^#\?$1=.*|$1=$2|" "$g"; else echo "$1=$2" >> "$g"; fi; }
+	set_grub GRUB_CMDLINE_LINUX_DEFAULT "\"$cmdline\""
+	set_grub GRUB_DISABLE_LINUX_UUID true
+	set_grub GRUB_DISABLE_LINUX_PARTUUID false
+	set_grub GRUB_DISTRIBUTOR Iskra
+	set_grub GRUB_TIMEOUT 5
+	set_grub GRUB_GFXMODE auto
+	set_grub GRUB_TERMINAL_OUTPUT gfxterm
+	set_grub GRUB_THEME /boot/grub/themes/iskra/theme.txt
+	mkdir -p "$T/boot/grub/themes"
+	cp -a "$T/usr/share/iskra/grub-theme" "$T/boot/grub/themes/iskra"
+	in_target "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Iskra --recheck" || fail "grub-install"
+	in_target "grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable" || fail "grub-install (fallback)"
+	in_target "grub-mkconfig -o /boot/grub/grub.cfg" || fail "grub-mkconfig"
+	if ! grep -q "root=PARTUUID=$(partuuid "$ROOT")" "$T/boot/grub/grub.cfg"; then
+		# GRUB named the root by its filesystem UUID, which only an initrd can find: make one
+		# with Slackware's own generator (with hibernation's resume), and the menu again
+		say "GRUB uses the root's UUID: making an initrd for it (Slackware's mkinitrd)"
+		local kver; kver=$(ls "$T/lib/modules" | sort -V | tail -n 1)
+		in_target "cmd=\$(/usr/share/mkinitrd/mkinitrd_command_generator.sh -k $kver -R $ROOT -r) && eval \"\$cmd ${SWAP:+-h $SWAP}\"" || fail "mkinitrd"
+		in_target "grub-mkconfig -o /boot/grub/grub.cfg" || fail "grub-mkconfig"
+		grep -q 'initrd.*initrd.gz' "$T/boot/grub/grub.cfg" || fail "GRUB's menu has no initrd and no PARTUUID: the laptop wouldn't find its disk"
+	fi
+	cp "$LOG" "$T/var/log/iskra-install.log"
+}
+
+cleanup() {
+	sync
+	for d in sys/firmware/efi/efivars sys run proc dev/pts dev boot/efi; do umount -l "$T/$d" 2>/dev/null; done
+	umount -l "$T" 2>/dev/null
+}
+
+# ---------------------------------------------------------------- main
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+[ -d /sys/firmware/efi ] || { notice "This computer started the stick in legacy BIOS mode. Iskra installs for UEFI only: restart and pick the stick's UEFI entry."; exit 2; }
+[ -d "$SRC/usr/share/iskra" ] || { notice "This doesn't look like Iskra's live stick ($SRC isn't there)."; exit 2; }
+mountpoint -q "$T" && { notice "$T is already in use: restart and run the installer again."; exit 2; }
+: > "$LOG"
+ask
+trap cleanup EXIT
+disk
+copy
+settings
+cleanup
+trap - EXIT
+dlg --msgbox "Iskra is installed.
+
+Restart (sudo reboot) and take the USB stick out when the screen goes dark.
+
+Once you're on the desktop:
+  Super+?                  the keys
+  iskra-learn              how the system works; sparkpkg help: installing software
+  iskra-fingerprint        use your finger for sudo
+  sparkpkg install libreoffice   LibreOffice (ready-made: no compiling)" 16 76

@@ -1,0 +1,22 @@
+#!/bin/bash
+# quickshell.SlackBuild: the QtQuick toolkit the Garden System (bar, launcher, notifications, lock,
+# login screen, Command Mode) is written in. v0.3.2, on Slackware's Qt 6. Run in this folder, as root.
+PRGNAM=quickshell
+. ../lib.sh
+SRC=quickshell-4f508be500dea6e5732cc3d50382a0048b17e7b1
+cd $TMP; rm -rf $SRC; tar xf $CWD/$SRC.tar.gz; cd $SRC
+# no crash handler (it needs cpptrace, which Slackware doesn't have); no Hyprland or i3 parts
+# (Avalon runs Mango); QML modules where Slackware's Qt 6 looks for them
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS="$SLKCFLAGS" -DCMAKE_CXX_FLAGS="$SLKCFLAGS" \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_INSTALL_LIBDIR=lib64 \
+  -DINSTALL_QMLDIR=/usr/lib64/qt6/qml \
+  -DDISTRIBUTOR="Avalon (Slackware)" \
+  -DCRASH_HANDLER=OFF \
+  -DHYPRLAND=OFF -DI3=OFF
+cmake --build build
+DESTDIR=$PKG cmake --install build
+install -d $PKG/usr/doc/$PRGNAM-$VERSION; cp -a LICENSE* README.md $PKG/usr/doc/$PRGNAM-$VERSION/
+finish
